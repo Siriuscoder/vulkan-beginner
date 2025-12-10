@@ -12,13 +12,182 @@
 #define CHECK_VK(func_call) if ((r = func_call) != VK_SUCCESS) { fprintf(stderr, "Failed '%s': %d\n", r); exit(1); }
 
 static const char *sample_name = "Beginner vulkan sample";
+static const char *VK_LAYER_KHRONOS_validation_name = "VK_LAYER_KHRONOS_validation";
 
 static void print_extensions(const char **extensions, uint32_t count)
 {
-    for (size_t i = 0; i < count; i++)
+    for (uint32_t i = 0; i < count; i++)
     {
         printf("\t%s\n", extensions[i]);
     }
+}
+
+static void print_vulkan_version(void)
+{
+    VkResult r;
+    uint32_t version;
+
+    CHECK_VK(vkEnumerateInstanceVersion(&version));
+    printf("Vulkan version: %d.%d.%d\n", 
+        VK_API_VERSION_MAJOR(version), 
+        VK_API_VERSION_MINOR(version), 
+        VK_API_VERSION_PATCH(version));
+}
+
+static int print_vulkan_instance_extensions(void)
+{
+    VkResult r;
+    uint32_t extensionCount = 0;
+    VkExtensionProperties *extensionsProps;
+
+    CHECK_VK(vkEnumerateInstanceExtensionProperties(NULL, &extensionCount, NULL));
+    extensionsProps = malloc(sizeof(VkExtensionProperties) * extensionCount);
+    CHECK_VK(vkEnumerateInstanceExtensionProperties(NULL, &extensionCount, extensionsProps));
+    printf("Available instance extensions:\n");
+    for (uint32_t i = 0; i < extensionCount; i++)
+    {
+        printf("\t%s v%d.%d.%d\n", extensionsProps[i].extensionName, 
+            VK_API_VERSION_MAJOR(extensionsProps[i].specVersion),
+            VK_API_VERSION_MINOR(extensionsProps[i].specVersion),
+            VK_API_VERSION_PATCH(extensionsProps[i].specVersion));
+    }
+
+    free(extensionsProps);
+    return 0;
+}
+
+static int check_validation_layers_support(void)
+{
+    uint32_t layersCount = 0;
+    VkResult r;
+    VkLayerProperties *layers;
+    int ret = 0;
+
+    CHECK_VK(vkEnumerateInstanceLayerProperties(&layersCount, NULL));
+
+    layers = malloc(sizeof(VkLayerProperties) * layersCount);
+    CHECK_VK(vkEnumerateInstanceLayerProperties(&layersCount, layers));
+
+    printf("Available layers:\n");
+    for (uint32_t i = 0; i < layersCount; i++)
+    {
+        uint32_t extensionCount = 0;
+        VkExtensionProperties *extensionsProps;
+
+        if (strcmp(layers[i].layerName, VK_LAYER_KHRONOS_validation_name) == 0)
+        {
+            ret = 1;
+        }
+
+        CHECK_VK(vkEnumerateInstanceExtensionProperties(layers[i].layerName, &extensionCount, NULL));
+
+        extensionsProps = malloc(sizeof(VkExtensionProperties) * extensionCount);
+        CHECK_VK(vkEnumerateInstanceExtensionProperties(layers[i].layerName, &extensionCount, extensionsProps));
+
+        printf("\t%s v%d.%d.%d (%d) Layer extensions:\n", layers[i].layerName, 
+            VK_API_VERSION_MAJOR(layers[i].specVersion), 
+            VK_API_VERSION_MINOR(layers[i].specVersion), 
+            VK_API_VERSION_PATCH(layers[i].specVersion), 
+            layers[i].implementationVersion);
+
+        for (uint32_t j = 0; j < extensionCount; j++)
+        {
+            printf("\t\t%s v%d.%d.%d\n", extensionsProps[j].extensionName, 
+                VK_API_VERSION_MAJOR(extensionsProps[j].specVersion), 
+                VK_API_VERSION_MINOR(extensionsProps[j].specVersion), 
+                VK_API_VERSION_PATCH(extensionsProps[j].specVersion));
+        }
+
+        free(extensionsProps);
+    }
+
+    free(layers);
+    return ret;
+}
+
+static VkBool32 validation_layer_debug_callback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, 
+    VkDebugUtilsMessageTypeFlagsEXT messageType, 
+    const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData) 
+{
+    printf("VALIDATION %s(%s): %s\n", (messageSeverity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT ? "ERROR" : 
+        (messageSeverity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT ? "WARNING" :
+        (messageSeverity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT ? "INFO" :
+        (messageSeverity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT ? "VERBOSE" : "UNKNOWN")))),
+        pCallbackData->pMessageIdName,
+        pCallbackData->pMessage);
+
+    return VK_FALSE;
+}
+
+static VkInstance create_vulkan_instance_with_validation_layers_support(const VkApplicationInfo *appInfo, 
+    const char **extensions, uint32_t extensionsCount)
+{
+    VkResult r;
+    VkInstance instance;
+    VkInstanceCreateInfo instInfo;
+    VkDebugUtilsMessengerCreateInfoEXT debugCreateInfo;
+    VkValidationFeaturesEXT validationFeatures;
+    VkValidationFeatureEnableEXT enables[] = {
+        VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,
+        VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT,
+        VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT,
+        VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT
+    };
+
+    // Enabling validation layers logging callback
+    memset(&debugCreateInfo, 0, sizeof(debugCreateInfo));
+    debugCreateInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+    debugCreateInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | 
+        VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT |
+        VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | 
+        VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+    debugCreateInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | 
+        VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | 
+        VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+    debugCreateInfo.pfnUserCallback = validation_layer_debug_callback;
+
+    // Enabling advanced debugging features
+    memset(&validationFeatures, 0, sizeof(validationFeatures));
+    validationFeatures.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
+    validationFeatures.pNext = &debugCreateInfo;
+    validationFeatures.enabledValidationFeatureCount = sizeof(enables) / sizeof(enables[0]);
+    validationFeatures.pEnabledValidationFeatures = enables;
+
+    // Enabling validation layers extensions
+    extensions[extensionsCount++] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
+    extensions[extensionsCount++] = VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME;
+
+    memset(&instInfo, 0, sizeof(instInfo));
+    instInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+    instInfo.pNext = &validationFeatures;
+    instInfo.pApplicationInfo = appInfo;
+    // Setup extensions
+    instInfo.enabledExtensionCount = extensionsCount;
+    instInfo.ppEnabledExtensionNames = extensions;
+    // Setup validation layers
+    instInfo.enabledLayerCount = 1;
+    instInfo.ppEnabledLayerNames = &VK_LAYER_KHRONOS_validation_name;
+
+    CHECK_VK(vkCreateInstance(&instInfo, NULL, &instance));
+    return instance;
+}
+
+static VkInstance create_vulkan_instance(const VkApplicationInfo *appInfo, 
+    const char **extensions, uint32_t extensionsCount)
+{
+    VkResult r;
+    VkInstance instance;
+    VkInstanceCreateInfo instInfo;
+
+    memset(&instInfo, 0, sizeof(instInfo));
+    instInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+    instInfo.pApplicationInfo = appInfo;
+    // Setup extensions
+    instInfo.enabledExtensionCount = extensionsCount;
+    instInfo.ppEnabledExtensionNames = extensions;
+
+    CHECK_VK(vkCreateInstance(&instInfo, NULL, &instance));
+    return instance;
 }
 
 static void init_sdl2(void)
@@ -32,7 +201,7 @@ static void init_sdl2(void)
     SDL_SetThreadPriority(SDL_THREAD_PRIORITY_HIGH);
 }
 
-static SDL_Window* create_sdl2_vulkan_window(int flags)
+static SDL_Window* create_sdl2_vulkan_window(uint32_t flags)
 {
     SDL_DisplayMode displayMode;
     int displayIndex = 0;
@@ -78,13 +247,12 @@ static SDL_Window* create_sdl2_vulkan_window(int flags)
     return vulkanWindow;
 }
 
-static VkInstance init_sdl2_vulkan_instance(SDL_Window *window)
+static VkInstance init_sdl2_vulkan_instance(SDL_Window *window, uint32_t flags)
 {
     uint32_t extCount = 0;
     const char **extensions = NULL;
     VkInstance vulkanInstance;
     VkApplicationInfo appInfo;
-    VkInstanceCreateInfo instInfo;
     VkResult r;
 
     // Init volk (global loader)
@@ -94,35 +262,43 @@ static VkInstance init_sdl2_vulkan_instance(SDL_Window *window)
         exit(1);
     }
 
+    print_vulkan_version();
+    print_vulkan_instance_extensions();
+
     if (SDL_Vulkan_GetInstanceExtensions(window, &extCount, NULL) != SDL_TRUE)
     {
         fprintf(stderr, "Failed to get vulkan instance extensions %s\n", SDL_GetError());
         exit(1);
     }
 
-    extensions = malloc(sizeof(char*) * extCount);
+    extensions = malloc(sizeof(char*) * (extCount + 10)); // Reserving some space for validation layers and other extensions
     if (SDL_Vulkan_GetInstanceExtensions(window, &extCount, extensions) != SDL_TRUE)
     {
         fprintf(stderr, "Failed to get vulkan instance extensions %s\n", SDL_GetError());
         exit(1);
     }
 
-    printf("Required extensions:\n");
+    printf("SDL requesting the following extensions:\n");
     print_extensions(extensions, extCount);
 
-    memset(&instInfo, 0, sizeof(VkInstanceCreateInfo));
     memset(&appInfo, 0, sizeof(VkApplicationInfo));
-
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
     appInfo.pApplicationName = sample_name;
     appInfo.apiVersion = VK_API_VERSION_1_4;
+    appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
+    appInfo.pEngineName = "No Engine";
+    appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
 
-    instInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-    instInfo.pApplicationInfo = &appInfo;
-    instInfo.enabledExtensionCount = extCount;
-    instInfo.ppEnabledExtensionNames = extensions;
-
-    CHECK_VK(vkCreateInstance(&instInfo, NULL, &vulkanInstance));
+    if (flags & SAMPLE_VALIDATION_LAYERS && check_validation_layers_support())
+    {
+        vulkanInstance = create_vulkan_instance_with_validation_layers_support(&appInfo, extensions, extCount);
+    }
+    else
+    {
+        printf("Validation layers is not supported\n");
+        vulkanInstance = create_vulkan_instance(&appInfo, extensions, extCount);
+    }
+    
     // Load instance-level functions (must be after vkCreateInstance!)
     volkLoadInstance(vulkanInstance);
     free(extensions);
@@ -152,8 +328,8 @@ int main()
 
     init_sdl2();
 
-    window = create_sdl2_vulkan_window(0);
-    vulkanInstance = init_sdl2_vulkan_instance(window);
+    window = create_sdl2_vulkan_window(flags);
+    vulkanInstance = init_sdl2_vulkan_instance(window, flags);
 
     printf("VkInstance successfully created (0x%p)\n", vulkanInstance);
     printf("Press any key to quit\n");

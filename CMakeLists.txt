@@ -14,7 +14,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-set(DEBUG_GCC_COMPILER_FLAGS "-DVALIDATION_LAYERS -DDEBUG -g3 -O0 -fstack-protector-all -fno-omit-frame-pointer -fno-optimize-sibling-calls")
+set(DEBUG_GCC_COMPILER_FLAGS "-DVALIDATION_LAYERS -DDEBUG -g3 -O0 -fsanitize=address -fstack-protector-all -fno-omit-frame-pointer -fno-optimize-sibling-calls")
 set(RELEASE_GCC_COMPILER_FLAGS "-DNDEBUG -g0 -O3")
 set(CMAKE_C_FLAGS "${CXX_CLANG_SANITIZE} -std=c99")
 set(CMAKE_C_FLAGS_DEBUG ${DEBUG_GCC_COMPILER_FLAGS})
@@ -66,7 +66,6 @@ target_include_directories(vulkan_beginner PRIVATE
 # against the vulkan_beginner target, but will not be propagated to any
 # other targets that depend on the vulkan_beginner target.
 target_link_libraries(vulkan_beginner PRIVATE 
-    ${Vulkan_LIBRARY} 
     ${Vulkan_volk_LIBRARY}
     ${SDL2_LIBRARIES}
 )
