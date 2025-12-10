@@ -9,7 +9,7 @@
 #define SAMPLE_FULLSCREEN 0x00000001
 #define SAMPLE_VALIDATION_LAYERS 0x00000002
 
-#define CHECK_VK(func_call) if ((r = func_call) != VK_SUCCESS) { fprintf(stderr, "Failed '%s': %d\n", r); exit(1); }
+#define CHECK_VK(func_call) if ((r = func_call) != VK_SUCCESS) { fprintf(stderr, "Failed '%s': %d\n", #func_call, r); exit(1); }
 
 static const char *sample_name = "Beginner vulkan sample";
 static const char *VK_LAYER_KHRONOS_validation_name = "VK_LAYER_KHRONOS_validation";
@@ -253,7 +253,6 @@ static VkInstance init_sdl2_vulkan_instance(SDL_Window *window, uint32_t flags)
     const char **extensions = NULL;
     VkInstance vulkanInstance;
     VkApplicationInfo appInfo;
-    VkResult r;
 
     // Init volk (global loader)
     if (volkInitialize() != VK_SUCCESS) 
@@ -331,7 +330,7 @@ int main()
     window = create_sdl2_vulkan_window(flags);
     vulkanInstance = init_sdl2_vulkan_instance(window, flags);
 
-    printf("VkInstance successfully created (0x%p)\n", vulkanInstance);
+    printf("VkInstance successfully created (0x%p)\n", (void *)vulkanInstance);
     printf("Press any key to quit\n");
 
     while (running)

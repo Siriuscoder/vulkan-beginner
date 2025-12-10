@@ -1,0 +1,27 @@
+name: Build
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install Linux dependencies
+      shell: bash
+      run: |
+        wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo tee /etc/apt/trusted.gpg.d/lunarg.asc
+        sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-noble.list http://packages.lunarg.com/vulkan/lunarg-vulkan-noble.list
+
+        sudo apt-get update
+        sudo apt-get install -y ninja-build cmake clang libc++-dev libc++abi-dev vulkan-sdk libsdl2-dev libvolk-dev
+
+    - name: Configure CMake
+      run: cmake -G "Ninja" -B ${{ github.workspace }}/build/ -DCMAKE_BUILD_TYPE=Debug -DCMAKE_VERBOSE_MAKEFILE=ON
+
+    - name: Build
+      run: cmake --build ${{ github.workspace }}/build --config Debug
