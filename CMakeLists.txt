@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.31.0)
 project(vulkan_beginner)
 
+option(ENABLE_SANITAIZE "Enable address sanitizer" OFF)
+
 # Configuration
 set(CMAKE_CONFIGURATION_TYPES Debug Release)
 # Platform configuration
@@ -15,7 +17,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(COMPILLER_COMMON_FLAGS "-fPIC -Wall -Wpedantic -Werror -pedantic-errors -Wno-format-security -Wno-unused-label")
-set(DEBUG_GCC_COMPILER_FLAGS "${COMPILLER_COMMON_FLAGS} -DVALIDATION_LAYERS -DDEBUG -g3 -O0 -fsanitize=address -fstack-protector-all -fno-omit-frame-pointer -fno-optimize-sibling-calls")
+if (ENABLE_SANITAIZE)
+    set(COMPILLER_COMMON_FLAGS "${COMPILLER_COMMON_FLAGS} -fsanitize=address")
+endif()
+
+set(DEBUG_GCC_COMPILER_FLAGS "${COMPILLER_COMMON_FLAGS} -DVALIDATION_LAYERS -DDEBUG -g3 -O0 -fstack-protector-all -fno-omit-frame-pointer -fno-optimize-sibling-calls")
 set(RELEASE_GCC_COMPILER_FLAGS "${COMPILLER_COMMON_FLAGS} -DNDEBUG -g0 -O3")
 set(CMAKE_C_FLAGS "-std=c99")
 set(CMAKE_C_FLAGS_DEBUG ${DEBUG_GCC_COMPILER_FLAGS})

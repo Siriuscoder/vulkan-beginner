@@ -8,6 +8,7 @@
 
 #define SAMPLE_FULLSCREEN 0x00000001
 #define SAMPLE_VALIDATION_LAYERS 0x00000002
+#define SAMPLE_USE_DISCRETE_GPU 0x00000004
 
 #define CHECK_VK(func_call) if ((r = func_call) != VK_SUCCESS) { fprintf(stderr, "Failed '%s': %d\n", #func_call, r); exit(1); }
 
@@ -109,10 +110,10 @@ static VkBool32 validation_layer_debug_callback(VkDebugUtilsMessageSeverityFlagB
     VkDebugUtilsMessageTypeFlagsEXT messageType, 
     const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData) 
 {
-    printf("VALIDATION %s(%s): %s\n", (messageSeverity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT ? "ERROR" : 
-        (messageSeverity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT ? "WARNING" :
-        (messageSeverity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT ? "INFO" :
-        (messageSeverity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT ? "VERBOSE" : "UNKNOWN")))),
+    printf("VALIDATION %s(%s): %s\n", (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT ? "ERROR" : 
+        (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT ? "WARNING" :
+        (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT ? "INFO" :
+        (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT ? "VERBOSE" : "UNKNOWN")))),
         pCallbackData->pMessageIdName,
         pCallbackData->pMessage);
 
@@ -247,7 +248,7 @@ static SDL_Window* create_sdl2_vulkan_window(uint32_t flags)
     return vulkanWindow;
 }
 
-static VkInstance init_sdl2_vulkan_instance(SDL_Window *window, uint32_t flags)
+static VkInstance create_sdl2_vulkan_instance(SDL_Window *window, uint32_t flags)
 {
     uint32_t extCount = 0;
     const char **extensions = NULL;
@@ -302,11 +303,124 @@ static VkInstance init_sdl2_vulkan_instance(SDL_Window *window, uint32_t flags)
     volkLoadInstance(vulkanInstance);
     free(extensions);
 
+    printf("VkInstance successfully created (%p)\n", (void *)vulkanInstance);
     return vulkanInstance;
 }
 
-static void shutdown(SDL_Window *window, VkInstance instance)
+static VkSurfaceKHR create_sdl2_vulkan_surface(SDL_Window *window, VkInstance instance)
 {
+    VkSurfaceKHR surface;
+    if (SDL_Vulkan_CreateSurface(window, instance, &surface) != SDL_TRUE)
+    {
+        fprintf(stderr, "Failed to create vulkan surface %s\n", SDL_GetError());
+        exit(1);
+    }
+
+    return surface;
+}
+
+static uint32_t find_situable_queue_family(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface)
+{
+    VkResult r;
+    uint32_t queueFamilyCount = 0;
+    int32_t foundQueueFamilyIndex = UINT32_MAX;
+
+    vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, NULL);
+
+    VkQueueFamilyProperties *queueFamilies = malloc(sizeof(VkQueueFamilyProperties) * queueFamilyCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, queueFamilies);
+
+    for (uint32_t i = 0; i < queueFamilyCount; i++)
+    {
+        if (queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
+        {
+            VkBool32 presentSupport = 0;
+            r = vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, i, surface, &presentSupport);
+            if (r == VK_SUCCESS && presentSupport == VK_TRUE)
+            {
+                foundQueueFamilyIndex = i;
+                break;
+            }
+        }
+    }
+
+    free(queueFamilies);
+    return foundQueueFamilyIndex;
+}
+
+static VkPhysicalDevice choose_vulkan_physical_device(VkInstance instance, VkSurfaceKHR surface, uint32_t flags)
+{
+    VkResult r;
+    uint32_t deviceCount = 0;
+    VkPhysicalDevice chosenDevice = VK_NULL_HANDLE;
+
+    CHECK_VK(vkEnumeratePhysicalDevices(instance, &deviceCount, NULL));
+    if (deviceCount == 0)
+    {
+        fprintf(stderr, "Failed to find GPUs with Vulkan support\n");
+        exit(1);
+    }
+
+    VkPhysicalDevice *devices = malloc(sizeof(VkPhysicalDevice) * deviceCount);
+    CHECK_VK(vkEnumeratePhysicalDevices(instance, &deviceCount, devices));
+
+    printf("Available physical devices:\n");
+    for (uint32_t i = 0; i < deviceCount; i++)
+    {
+        VkPhysicalDeviceProperties props;
+        vkGetPhysicalDeviceProperties(devices[i], &props);
+        printf("\t%s\n", props.deviceName);
+    }
+
+    for(uint32_t i = 0; i < deviceCount; i++)
+    {
+        uint32_t queueFamilyIndex;
+        VkPhysicalDeviceProperties props;
+        vkGetPhysicalDeviceProperties(devices[i], &props);
+
+        // Check graphics and present queue support
+        if ((queueFamilyIndex = find_situable_queue_family(devices[i], surface)) != UINT32_MAX)
+        {
+            if (flags & SAMPLE_USE_DISCRETE_GPU)
+            {
+                // Check if discrete GPU
+                if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
+                {
+                    printf("Using discrete GPU: %s v%d.%d.%d\n", props.deviceName,
+                        VK_API_VERSION_MAJOR(props.apiVersion),
+                        VK_API_VERSION_MINOR(props.apiVersion),
+                        VK_API_VERSION_PATCH(props.apiVersion));
+
+                    chosenDevice = devices[i];
+                    break;
+                }
+            }
+            else
+            {
+                printf("Using first situable GPU: %s v%d.%d.%d\n", props.deviceName,
+                    VK_API_VERSION_MAJOR(props.apiVersion),
+                    VK_API_VERSION_MINOR(props.apiVersion),
+                    VK_API_VERSION_PATCH(props.apiVersion));
+
+                chosenDevice = devices[i];
+                break;
+            }
+        }
+    }
+
+    if (chosenDevice == VK_NULL_HANDLE)
+    {
+        fprintf(stderr, "Failed to find situable GPU\n");
+        exit(1);
+    }
+
+    free(devices);
+    return chosenDevice;
+}
+
+static void shutdown(SDL_Window *window, VkInstance instance, VkSurfaceKHR surface)
+{
+    vkDestroySurfaceKHR(instance, surface, NULL);
     vkDestroyInstance(instance, NULL);
     SDL_DestroyWindow(window);
     SDL_Quit();
@@ -315,7 +429,9 @@ static void shutdown(SDL_Window *window, VkInstance instance)
 int main()
 {
     SDL_Window *window = NULL;
-    VkInstance vulkanInstance = NULL;
+    VkInstance vulkanInstance = VK_NULL_HANDLE;
+    VkSurfaceKHR vulkanSurface = VK_NULL_HANDLE;
+    VkPhysicalDevice vulkanPhysicalDevice = VK_NULL_HANDLE;
     int8_t running = 1;
     uint32_t flags = 0;
 
@@ -328,9 +444,11 @@ int main()
     init_sdl2();
 
     window = create_sdl2_vulkan_window(flags);
-    vulkanInstance = init_sdl2_vulkan_instance(window, flags);
+    vulkanInstance = create_sdl2_vulkan_instance(window, flags);
+    vulkanSurface = create_sdl2_vulkan_surface(window, vulkanInstance);
+    vulkanPhysicalDevice = choose_vulkan_physical_device(vulkanInstance, vulkanSurface, flags);
 
-    printf("VkInstance successfully created (0x%p)\n", (void *)vulkanInstance);
+    printf("Chosen physical device: %p\n", (void *)vulkanPhysicalDevice);
     printf("Press any key to quit\n");
 
     while (running)
@@ -345,6 +463,6 @@ int main()
         SDL_Delay(10);
     }
 
-    shutdown(window, vulkanInstance);
+    shutdown(window, vulkanInstance, vulkanSurface);
     return 0;
 }
