@@ -18,7 +18,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(COMPILLER_COMMON_FLAGS "-fPIC -Wall -Wpedantic -Werror -pedantic-errors -Wno-format-security -Wno-unused-label")
 if (ENABLE_SANITAIZE)
-    set(COMPILLER_COMMON_FLAGS "${COMPILLER_COMMON_FLAGS} -fsanitize=address")
+    set(COMPILLER_COMMON_FLAGS "${COMPILLER_COMMON_FLAGS} -fsanitize=address -fsanitize=undefined -fno-sanitize=alignment -fsanitize=leak")
 endif()
 
 set(DEBUG_GCC_COMPILER_FLAGS "${COMPILLER_COMMON_FLAGS} -DVALIDATION_LAYERS -DDEBUG -g3 -O0 -fstack-protector-all -fno-omit-frame-pointer -fno-optimize-sibling-calls")
