@@ -6,6 +6,18 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_vulkan.h>
 
+#ifndef MIN
+#   define MIN(a,b) (((a)<(b))?(a):(b))
+#endif
+
+#ifndef MAX
+#   define MAX(a,b) (((a)>(b))?(a):(b))
+#endif
+
+#ifndef CLAMP
+#   define CLAMP(value, min, max) MIN(MAX(value, min), max)
+#endif
+
 #define SAMPLE_FULLSCREEN 0x00000001
 #define SAMPLE_VALIDATION_LAYERS 0x00000002
 #define SAMPLE_USE_DISCRETE_GPU 0x00000004
@@ -33,6 +45,22 @@ typedef struct VkQueueInfo
     uint32_t familyIndex;
 } VkQueueInfo;
 
+typedef struct VkSwapchainFramebuffer
+{
+    VkImage image;
+    VkImageView imageView;
+    VkFramebuffer framebuffer;
+} VkSwapchainFramebuffer;
+
+typedef struct VkSwapchainInfo
+{
+    VkExtent2D extent;
+    VkSurfaceTransformFlagBitsKHR transformFlags;
+    VkSwapchainKHR swapchain;
+    uint32_t imageCount;
+    VkSwapchainFramebuffer *framebuffers;
+} VkSwapchainInfo;
+
 typedef struct VkRenderContext
 {
     SDL_Window *window;
@@ -43,10 +71,12 @@ typedef struct VkRenderContext
     VkSurfaceFormatKHR surfaceFormat;
     VkDeviceFeatures supportedFeatures;
     VkPresentModeKHR presentMode;
+    VkSwapchainInfo swapchainInfo;
     uint32_t queueFamilyCount;
     VkQueueInfo graphicsQueue;
     VkQueueInfo presentQueue;
     VkQueueInfo transferQueue;
+    VkRenderPass renderPass;
 } VkRenderContext;
 
 static void print_extensions(const char *extensions[], uint32_t count)
@@ -86,16 +116,20 @@ static void check_vulkan_instance_extensions_support(VkRenderContext *context)
             VK_API_VERSION_MINOR(extensionsProps[i].specVersion),
             VK_API_VERSION_PATCH(extensionsProps[i].specVersion));
 
+#ifdef VK_KHR_surface_maintenance1
         if (strcmp(extensionsProps[i].extensionName, VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME) == 0)
         {
             context->supportedFeatures.surfaceMaintenance1Support = VK_TRUE;
         }
+#endif
 
+#ifdef VK_KHR_get_surface_capabilities2
         if (strcmp(extensionsProps[i].extensionName, VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME) == 0)
         {
             context->supportedFeatures.getSurfaceCapabilities2Support = VK_TRUE;
         }
     }
+#endif
 
     free(extensionsProps);
 }
@@ -439,7 +473,7 @@ static int check_physical_device_formats(VkRenderContext *context, VkPhysicalDev
 
     if (formatCount == 0) 
     {
-        return 0;
+        return VK_FALSE;
     }
 
     surfaceFormats = malloc(sizeof(VkSurfaceFormatKHR) * formatCount);
@@ -452,12 +486,12 @@ static int check_physical_device_formats(VkRenderContext *context, VkPhysicalDev
         {
             context->surfaceFormat = surfaceFormats[i];
             free(surfaceFormats);
-            return 1;
+            return VK_TRUE;
         }
     }
 
     free(surfaceFormats);
-    return 0;
+    return VK_FALSE;
 }
 
 static int check_physical_device_present_modes(VkRenderContext *context, VkPhysicalDevice physicalDevice, uint32_t flags)
@@ -681,6 +715,8 @@ static void  create_vulkan_logical_device(VkRenderContext *context, uint32_t fla
     printf("Activating the following device extensions:\n");
     print_extensions(enabledExtensions, deviceInfo.enabledExtensionCount);
     CHECK_VK(vkCreateDevice(context->physicalDevice, &deviceInfo, NULL, &context->logicalDevice));
+    // load device functions
+    volkLoadDevice(context->logicalDevice);
 
     // Get queues
     vkGetDeviceQueue(context->logicalDevice, context->graphicsQueue.familyIndex, 
@@ -696,8 +732,199 @@ static void  create_vulkan_logical_device(VkRenderContext *context, uint32_t fla
     free(queueFamilyIndex);
 }
 
+static void retrieve_vulkan_swapchain_info(VkRenderContext *context)
+{
+    VkResult r;
+    VkSurfaceCapabilitiesKHR surfaceCapabilities = {0};
+
+#if defined(VK_KHR_surface_maintenance1) && defined(VK_KHR_get_surface_capabilities2)
+    // Advanced device capabilities queries
+    if (context->supportedFeatures.surfaceMaintenance1Support &&
+        context->supportedFeatures.getSurfaceCapabilities2Support)
+    {
+        VkPhysicalDeviceSurfaceInfo2KHR surfaceInfo = {0};
+        VkSurfaceCapabilities2KHR surfaceCapabilities2 = {0};
+        VkSurfacePresentModeKHR presentMode = {0};
+
+        surfaceCapabilities2.sType = VK_STRUCTURE_TYPE_SURFACE_CAPABILITIES_2_KHR;
+
+        presentMode.sType = VK_STRUCTURE_TYPE_SURFACE_PRESENT_MODE_KHR;
+        presentMode.presentMode = context->presentMode;
+
+        surfaceInfo.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SURFACE_INFO_2_KHR;
+        surfaceInfo.pNext = &presentMode;
+        surfaceInfo.surface = context->surface;
+
+        CHECK_VK(vkGetPhysicalDeviceSurfaceCapabilities2KHR(context->physicalDevice, &surfaceInfo, &surfaceCapabilities2));
+        surfaceCapabilities = surfaceCapabilities2.surfaceCapabilities;
+    }
+    else
+#endif
+    {
+        CHECK_VK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(context->physicalDevice, context->surface, &surfaceCapabilities));
+    }
+
+    if (surfaceCapabilities.currentExtent.width == UINT32_MAX)
+    {
+        int width = 0, height = 0;
+        SDL_Vulkan_GetDrawableSize(context->window, &width, &height);
+        
+        context->swapchainInfo.extent.width = CLAMP((uint32_t)width, surfaceCapabilities.minImageExtent.width, 
+            surfaceCapabilities.maxImageExtent.width); 
+        context->swapchainInfo.extent.height = CLAMP((uint32_t)height, surfaceCapabilities.minImageExtent.height, 
+            surfaceCapabilities.maxImageExtent.height);
+    }
+    else
+    {
+        context->swapchainInfo.extent = surfaceCapabilities.currentExtent;
+    }
+
+    // Swapchain images count
+    context->swapchainInfo.imageCount = CLAMP(surfaceCapabilities.minImageCount + 1, surfaceCapabilities.minImageCount,
+        surfaceCapabilities.maxImageCount);
+    context->swapchainInfo.transformFlags = surfaceCapabilities.currentTransform;
+}
+
+static void create_vulkan_swapchain(VkRenderContext *context)
+{
+    VkResult r;
+    VkSwapchainCreateInfoKHR swapchainInfo = {0};
+    VkImage *swapchainImages = NULL;
+    
+    retrieve_vulkan_swapchain_info(context);
+
+    swapchainInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+    swapchainInfo.surface = context->surface;
+    swapchainInfo.minImageCount = context->swapchainInfo.imageCount;
+    swapchainInfo.imageFormat = context->surfaceFormat.format;
+    swapchainInfo.imageColorSpace = context->surfaceFormat.colorSpace;
+    swapchainInfo.imageExtent = context->swapchainInfo.extent;
+    swapchainInfo.imageArrayLayers = 1;
+    swapchainInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+    if (context->graphicsQueue.familyIndex != context->presentQueue.familyIndex) 
+    {
+        uint32_t queueFamilyIndices[] = {context->graphicsQueue.familyIndex, context->presentQueue.familyIndex};
+
+        swapchainInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+        swapchainInfo.queueFamilyIndexCount = 2;
+        swapchainInfo.pQueueFamilyIndices = queueFamilyIndices;
+    } else {
+        swapchainInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    }
+
+    swapchainInfo.preTransform = context->swapchainInfo.transformFlags;
+    swapchainInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    swapchainInfo.presentMode = context->presentMode;
+    swapchainInfo.clipped = VK_TRUE;
+    swapchainInfo.oldSwapchain = VK_NULL_HANDLE;
+
+    // Create swapchain
+    CHECK_VK(vkCreateSwapchainKHR(context->logicalDevice, &swapchainInfo, NULL, &context->swapchainInfo.swapchain));
+    // Retrieve swapchain images count, may not be the same as requested
+    CHECK_VK(vkGetSwapchainImagesKHR(context->logicalDevice, context->swapchainInfo.swapchain, 
+        &context->swapchainInfo.imageCount, NULL));
+
+    // Retrieve swapchain images
+    context->swapchainInfo.framebuffers = calloc(context->swapchainInfo.imageCount, sizeof(VkSwapchainFramebuffer));
+    swapchainImages = malloc(context->swapchainInfo.imageCount * sizeof(VkImage));
+    CHECK_VK(vkGetSwapchainImagesKHR(context->logicalDevice, context->swapchainInfo.swapchain, 
+        &context->swapchainInfo.imageCount, swapchainImages));
+
+    // Create image views and framebuffers for each swapchain image
+    for (uint32_t i = 0; i < context->swapchainInfo.imageCount; i++)
+    {
+        VkImageViewCreateInfo createImageInfo = {0};
+        VkFramebufferCreateInfo createFramebufferInfo = {0};
+
+        createImageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        createImageInfo.image = swapchainImages[i];
+        createImageInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        createImageInfo.format = context->surfaceFormat.format;
+        createImageInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createImageInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createImageInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createImageInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createImageInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        createImageInfo.subresourceRange.baseMipLevel = 0;
+        createImageInfo.subresourceRange.levelCount = 1;
+        createImageInfo.subresourceRange.baseArrayLayer = 0;
+        createImageInfo.subresourceRange.layerCount = 1;
+
+        CHECK_VK(vkCreateImageView(context->logicalDevice, &createImageInfo, NULL, &context->swapchainInfo.framebuffers[i].imageView));
+        context->swapchainInfo.framebuffers[i].image = swapchainImages[i];
+
+        createFramebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        createFramebufferInfo.renderPass = context->renderPass;
+        createFramebufferInfo.attachmentCount = 1;
+        createFramebufferInfo.pAttachments = &context->swapchainInfo.framebuffers[i].imageView;
+        createFramebufferInfo.width = context->swapchainInfo.extent.width;
+        createFramebufferInfo.height = context->swapchainInfo.extent.height;
+        createFramebufferInfo.layers = 1;
+
+        CHECK_VK(vkCreateFramebuffer(context->logicalDevice, &createFramebufferInfo, NULL, 
+            &context->swapchainInfo.framebuffers[i].framebuffer));
+    }
+
+    free(swapchainImages);
+}
+
+static void create_render_pass(VkRenderContext *context)
+{
+    VkResult r;
+    VkAttachmentDescription colorAttachment = {0};
+    VkAttachmentReference colorAttachmentRef = {0};
+    VkSubpassDescription subpass = {0};
+    VkSubpassDependency dependency = {0};
+    VkRenderPassCreateInfo renderPassInfo = {0};
+
+    colorAttachment.format = context->surfaceFormat.format;
+    colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+    // Subpass attachment refering to color attachment 0
+    colorAttachmentRef.attachment = 0;
+    colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 1;
+    subpass.pColorAttachments = &colorAttachmentRef;
+
+    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+    dependency.dstSubpass = 0;
+    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.srcAccessMask = 0;
+    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    renderPassInfo.attachmentCount = 1;
+    renderPassInfo.pAttachments = &colorAttachment;
+    renderPassInfo.subpassCount = 1;
+    renderPassInfo.pSubpasses = &subpass;
+    renderPassInfo.dependencyCount = 1;
+    renderPassInfo.pDependencies = &dependency;
+
+    CHECK_VK(vkCreateRenderPass(context->logicalDevice, &renderPassInfo, NULL, &context->renderPass));
+}
+
 static void shutdown(VkRenderContext *context)
 {
+    for (uint32_t i = 0; i < context->swapchainInfo.imageCount; i++)
+    {
+        vkDestroyFramebuffer(context->logicalDevice, context->swapchainInfo.framebuffers[i].framebuffer, NULL);
+        vkDestroyImageView(context->logicalDevice, context->swapchainInfo.framebuffers[i].imageView, NULL);
+    }
+
+    free(context->swapchainInfo.framebuffers);
+
+    vkDestroyRenderPass(context->logicalDevice, context->renderPass, NULL);
+    vkDestroySwapchainKHR(context->logicalDevice, context->swapchainInfo.swapchain, NULL);
     vkDestroyDevice(context->logicalDevice, NULL);
     vkDestroySurfaceKHR(context->instance, context->surface, NULL);
     vkDestroyInstance(context->instance, NULL);
@@ -724,6 +951,8 @@ int main()
     create_sdl2_vulkan_surface(&context);
     choose_vulkan_physical_device(&context, flags);
     create_vulkan_logical_device(&context, flags);
+    create_render_pass(&context);
+    create_vulkan_swapchain(&context);
 
     printf("Press any key to quit\n");
 
