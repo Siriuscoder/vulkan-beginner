@@ -28,7 +28,7 @@
 static const char *sample_name = "Beginner vulkan sample";
 static const char *VK_LAYER_KHRONOS_validation_name = "VK_LAYER_KHRONOS_validation";
 
-typedef struct VkDeviceFeatures
+typedef struct MyDeviceFeatures
 {
     VkPhysicalDeviceFeatures features;
     VkPhysicalDeviceLimits limits;
@@ -37,31 +37,31 @@ typedef struct VkDeviceFeatures
     uint8_t validationLayerSupport;
     uint8_t debugUtilsSupport;
     uint8_t validationFeaturesSupport;
-} VkDeviceFeatures;
+} MyDeviceFeatures;
 
-typedef struct VkQueueInfo
+typedef struct MyQueueInfo
 {
     VkQueue queue;
     uint32_t familyIndex;
-} VkQueueInfo;
+} MyQueueInfo;
 
-typedef struct VkSwapchainFramebuffer
+typedef struct MySwapchainFramebuffer
 {
     VkImage image;
     VkImageView imageView;
     VkFramebuffer framebuffer;
-} VkSwapchainFramebuffer;
+} MySwapchainFramebuffer;
 
-typedef struct VkSwapchainInfo
+typedef struct MySwapchainInfo
 {
     VkExtent2D extent;
     VkSurfaceTransformFlagBitsKHR transformFlags;
     VkSwapchainKHR swapchain;
     uint32_t imageCount;
-    VkSwapchainFramebuffer *framebuffers;
-} VkSwapchainInfo;
+    MySwapchainFramebuffer *framebuffers;
+} MySwapchainInfo;
 
-typedef struct VkRenderContext
+typedef struct MyRenderContext
 {
     SDL_Window *window;
     VkInstance instance;
@@ -69,15 +69,26 @@ typedef struct VkRenderContext
     VkPhysicalDevice physicalDevice;
     VkDevice logicalDevice;
     VkSurfaceFormatKHR surfaceFormat;
-    VkDeviceFeatures supportedFeatures;
+    MyDeviceFeatures supportedFeatures;
     VkPresentModeKHR presentMode;
-    VkSwapchainInfo swapchainInfo;
+    MySwapchainInfo swapchainInfo;
     uint32_t queueFamilyCount;
-    VkQueueInfo graphicsQueue;
-    VkQueueInfo presentQueue;
-    VkQueueInfo transferQueue;
+    MyQueueInfo graphicsQueue;
+    MyQueueInfo presentQueue;
+    MyQueueInfo transferQueue;
     VkRenderPass renderPass;
-} VkRenderContext;
+} MyRenderContext;
+
+static void init_sdl2(void)
+{
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) 
+    {
+        fprintf(stderr, "Failed to initialize SDL: %s\n", SDL_GetError());
+        exit(1);
+    }
+
+    SDL_SetThreadPriority(SDL_THREAD_PRIORITY_HIGH);
+}
 
 static void print_extensions(const char *extensions[], uint32_t count)
 {
@@ -99,7 +110,7 @@ static void print_vulkan_version(void)
         VK_API_VERSION_PATCH(version));
 }
 
-static void check_vulkan_instance_extensions_support(VkRenderContext *context)
+static void check_vulkan_instance_extensions_support(MyRenderContext *context)
 {
     VkResult r;
     uint32_t extensionCount = 0;
@@ -134,7 +145,7 @@ static void check_vulkan_instance_extensions_support(VkRenderContext *context)
     free(extensionsProps);
 }
 
-static void check_vulkan_instance_features_support(VkRenderContext *context)
+static void check_vulkan_instance_features_support(MyRenderContext *context)
 {
     uint32_t layersCount = 0;
     VkResult r;
@@ -206,7 +217,7 @@ static VkBool32 validation_layer_debug_callback(VkDebugUtilsMessageSeverityFlagB
     return VK_FALSE;
 }
 
-static void create_vulkan_instance(VkRenderContext *context, const VkApplicationInfo *appInfo, 
+static void create_vulkan_instance(MyRenderContext *context, const VkApplicationInfo *appInfo, 
     const char **extensions, uint32_t extensionsCount, uint32_t flags)
 {
     VkResult r;
@@ -289,18 +300,7 @@ static void create_vulkan_instance(VkRenderContext *context, const VkApplication
     CHECK_VK(vkCreateInstance(&instInfo, NULL, &context->instance));
 }
 
-static void init_sdl2(void)
-{
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) 
-    {
-        fprintf(stderr, "Failed to initialize SDL: %s\n", SDL_GetError());
-        exit(1);
-    }
-
-    SDL_SetThreadPriority(SDL_THREAD_PRIORITY_HIGH);
-}
-
-static void create_sdl2_vulkan_window(VkRenderContext *context, uint32_t flags)
+static void create_sdl2_vulkan_window(MyRenderContext *context, uint32_t flags)
 {
     SDL_DisplayMode displayMode;
     int displayIndex = 0;
@@ -344,7 +344,7 @@ static void create_sdl2_vulkan_window(VkRenderContext *context, uint32_t flags)
     SDL_ShowWindow(context->window);
 }
 
-static void create_sdl2_vulkan_instance(VkRenderContext *context, uint32_t flags)
+static void create_sdl2_vulkan_instance(MyRenderContext *context, uint32_t flags)
 {
     uint32_t extCount = 0;
     const char **extensions = NULL;
@@ -388,7 +388,7 @@ static void create_sdl2_vulkan_instance(VkRenderContext *context, uint32_t flags
     printf("VkInstance successfully created and loaded(%p)\n", (void *)context->instance);
 }
 
-static void create_sdl2_vulkan_surface(VkRenderContext *context)
+static void create_sdl2_vulkan_surface(MyRenderContext *context)
 {
     if (SDL_Vulkan_CreateSurface(context->window, context->instance, &context->surface) != SDL_TRUE)
     {
@@ -405,7 +405,7 @@ static VkQueueFamilyProperties *get_device_supported_queue_families(VkPhysicalDe
     return queueFamilies;
 }
 
-static int find_required_queue_families(VkRenderContext *context, VkPhysicalDevice physicalDevice, 
+static int find_required_queue_families(MyRenderContext *context, VkPhysicalDevice physicalDevice, 
     const VkQueueFamilyProperties *queueFamilies, uint32_t queueFamilyCount)
 {
     VkResult r;
@@ -464,7 +464,7 @@ static int find_required_queue_families(VkRenderContext *context, VkPhysicalDevi
     return VK_FALSE;
 }
 
-static int check_physical_device_formats(VkRenderContext *context, VkPhysicalDevice physicalDevice)
+static int check_physical_device_formats(MyRenderContext *context, VkPhysicalDevice physicalDevice)
 {
     uint32_t formatCount;
     VkSurfaceFormatKHR *surfaceFormats = NULL;
@@ -494,7 +494,7 @@ static int check_physical_device_formats(VkRenderContext *context, VkPhysicalDev
     return VK_FALSE;
 }
 
-static int check_physical_device_present_modes(VkRenderContext *context, VkPhysicalDevice physicalDevice, uint32_t flags)
+static int check_physical_device_present_modes(MyRenderContext *context, VkPhysicalDevice physicalDevice, uint32_t flags)
 {
     uint32_t presentModeCount;
     VkPresentModeKHR *presentModes = NULL;
@@ -554,7 +554,7 @@ static int check_physical_device_present_modes(VkRenderContext *context, VkPhysi
     return VK_FALSE;
 }
 
-static int check_physical_device_extensions_support(VkRenderContext *context, VkPhysicalDevice physicalDevice)
+static int check_physical_device_extensions_support(MyRenderContext *context, VkPhysicalDevice physicalDevice)
 {
     uint32_t extensionCount;
     VkExtensionProperties *extensions = NULL;
@@ -581,7 +581,7 @@ static int check_physical_device_extensions_support(VkRenderContext *context, Vk
     return VK_FALSE;
 }
 
-static void choose_vulkan_physical_device(VkRenderContext *context, uint32_t flags)
+static void choose_vulkan_physical_device(MyRenderContext *context, uint32_t flags)
 {
     VkResult r;
     uint32_t deviceCount = 0;
@@ -661,7 +661,7 @@ static void choose_vulkan_physical_device(VkRenderContext *context, uint32_t fla
     free(devices);
 }
 
-static void  create_vulkan_logical_device(VkRenderContext *context, uint32_t flags)
+static void  create_vulkan_logical_device(MyRenderContext *context, uint32_t flags)
 {
     VkResult r;
     VkDeviceQueueCreateInfo queueInfo[3] = {0};
@@ -732,7 +732,7 @@ static void  create_vulkan_logical_device(VkRenderContext *context, uint32_t fla
     free(queueFamilyIndex);
 }
 
-static void retrieve_vulkan_swapchain_info(VkRenderContext *context)
+static void retrieve_vulkan_swapchain_info(MyRenderContext *context)
 {
     VkResult r;
     VkSurfaceCapabilitiesKHR surfaceCapabilities = {0};
@@ -785,7 +785,7 @@ static void retrieve_vulkan_swapchain_info(VkRenderContext *context)
     context->swapchainInfo.transformFlags = surfaceCapabilities.currentTransform;
 }
 
-static void create_vulkan_swapchain(VkRenderContext *context)
+static void create_vulkan_swapchain(MyRenderContext *context)
 {
     VkResult r;
     VkSwapchainCreateInfoKHR swapchainInfo = {0};
@@ -826,7 +826,7 @@ static void create_vulkan_swapchain(VkRenderContext *context)
         &context->swapchainInfo.imageCount, NULL));
 
     // Retrieve swapchain images
-    context->swapchainInfo.framebuffers = calloc(context->swapchainInfo.imageCount, sizeof(VkSwapchainFramebuffer));
+    context->swapchainInfo.framebuffers = calloc(context->swapchainInfo.imageCount, sizeof(MySwapchainFramebuffer));
     swapchainImages = malloc(context->swapchainInfo.imageCount * sizeof(VkImage));
     CHECK_VK(vkGetSwapchainImagesKHR(context->logicalDevice, context->swapchainInfo.swapchain, 
         &context->swapchainInfo.imageCount, swapchainImages));
@@ -869,7 +869,7 @@ static void create_vulkan_swapchain(VkRenderContext *context)
     free(swapchainImages);
 }
 
-static void create_render_pass(VkRenderContext *context)
+static void create_vulkan_render_pass(MyRenderContext *context)
 {
     VkResult r;
     VkAttachmentDescription colorAttachment = {0};
@@ -913,7 +913,7 @@ static void create_render_pass(VkRenderContext *context)
     CHECK_VK(vkCreateRenderPass(context->logicalDevice, &renderPassInfo, NULL, &context->renderPass));
 }
 
-static void shutdown(VkRenderContext *context)
+static void shutdown(MyRenderContext *context)
 {
     for (uint32_t i = 0; i < context->swapchainInfo.imageCount; i++)
     {
@@ -936,7 +936,7 @@ int main()
 {
     int8_t running = 1;
     uint32_t flags = 0;//SAMPLE_ENABLE_VSYNC;
-    VkRenderContext context = {0};
+    MyRenderContext context = {0};
 
 #ifdef VALIDATION_LAYERS
     flags |= SAMPLE_VALIDATION_LAYERS;
@@ -951,7 +951,7 @@ int main()
     create_sdl2_vulkan_surface(&context);
     choose_vulkan_physical_device(&context, flags);
     create_vulkan_logical_device(&context, flags);
-    create_render_pass(&context);
+    create_vulkan_render_pass(&context);
     create_vulkan_swapchain(&context);
 
     printf("Press any key to quit\n");
