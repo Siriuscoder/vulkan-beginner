@@ -18,10 +18,10 @@
 #   define CLAMP(value, min, max) MIN(MAX(value, min), max)
 #endif
 
-#define SAMPLE_FULLSCREEN 0x00000001
-#define SAMPLE_VALIDATION_LAYERS 0x00000002
-#define SAMPLE_USE_DISCRETE_GPU 0x00000004
-#define SAMPLE_ENABLE_VSYNC 0x00000005
+#define SAMPLE_FULLSCREEN           0x00000001
+#define SAMPLE_VALIDATION_LAYERS    0x00000002
+#define SAMPLE_USE_DISCRETE_GPU     0x00000004
+#define SAMPLE_ENABLE_VSYNC         0x00000008
 
 #define CHECK_VK(func_call) if ((r = func_call) != VK_SUCCESS) { fprintf(stderr, "Failed '%s': %d\n", #func_call, r); exit(1); }
 
@@ -81,6 +81,22 @@ typedef struct MyRenderContext
 
 static void init_sdl2(void)
 {
+#ifdef SDL_HINT_APP_NAME
+    SDL_SetHint(SDL_HINT_APP_NAME, "Vulkan beginner sample"); 
+#endif
+
+#ifdef SDL_HINT_WINDOWS_DPI_AWARENESS
+    // "permonitorv2": Request per-monitor V2 DPI awareness. (Windows 10, version 1607 and later). 
+    // The most visible difference from "permonitor" is that window title bar will be scaled to the visually
+    // correct size when dragging between monitors with different scale factors. This is the preferred DPI awareness level.
+    SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
+#endif
+
+#ifdef SDL_HINT_VIDEO_HIGHDPI_DISABLED
+    // Allow HiDPI
+    SDL_SetHint(SDL_HINT_VIDEO_HIGHDPI_DISABLED, "0");
+#endif
+
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) 
     {
         fprintf(stderr, "Failed to initialize SDL: %s\n", SDL_GetError());
@@ -305,7 +321,7 @@ static void create_sdl2_vulkan_window(MyRenderContext *context, uint32_t flags)
     SDL_DisplayMode displayMode;
     int displayIndex = 0;
     int width = 1024, height = 768;
-    uint32_t windowFlags = SDL_WINDOW_VULKAN | SDL_WINDOW_HIDDEN;
+    uint32_t windowFlags = SDL_WINDOW_VULKAN | SDL_WINDOW_HIDDEN | SDL_WINDOW_ALLOW_HIGHDPI;
 
     if (SDL_GetDesktopDisplayMode(displayIndex, &displayMode) != 0)
     {
@@ -318,7 +334,7 @@ static void create_sdl2_vulkan_window(MyRenderContext *context, uint32_t flags)
         width = displayMode.w;
         height = displayMode.h;
 
-        windowFlags |= SDL_WINDOW_FULLSCREEN;
+        windowFlags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
         windowFlags |= SDL_WINDOW_BORDERLESS;
     }
 
@@ -764,7 +780,8 @@ static void retrieve_vulkan_swapchain_info(MyRenderContext *context)
         CHECK_VK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(context->physicalDevice, context->surface, &surfaceCapabilities));
     }
 
-    if (surfaceCapabilities.currentExtent.width == UINT32_MAX)
+    if (surfaceCapabilities.currentExtent.width == UINT32_MAX || 
+        surfaceCapabilities.currentExtent.height == UINT32_MAX)
     {
         int width = 0, height = 0;
         SDL_Vulkan_GetDrawableSize(context->window, &width, &height);
@@ -935,7 +952,7 @@ static void shutdown(MyRenderContext *context)
 int main()
 {
     int8_t running = 1;
-    uint32_t flags = 0;//SAMPLE_ENABLE_VSYNC;
+    uint32_t flags = SAMPLE_ENABLE_VSYNC;
     MyRenderContext context = {0};
 
 #ifdef VALIDATION_LAYERS
