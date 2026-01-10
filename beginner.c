@@ -6,6 +6,8 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_vulkan.h>
 
+#include "shader_io.h"
+
 #ifndef MIN
 #   define MIN(a,b) (((a)<(b))?(a):(b))
 #endif
@@ -77,6 +79,8 @@ typedef struct MyRenderContext
     MyQueueInfo presentQueue;
     MyQueueInfo transferQueue;
     VkRenderPass renderPass;
+    VkPipelineLayout graphicsPipelineLayout;
+    VkPipeline graphicsPipeline;
 } MyRenderContext;
 
 static void init_sdl2(void)
@@ -930,8 +934,132 @@ static void create_vulkan_render_pass(MyRenderContext *context)
     CHECK_VK(vkCreateRenderPass(context->logicalDevice, &renderPassInfo, NULL, &context->renderPass));
 }
 
+VkShaderModule load_vulkan_shader_module(MyRenderContext *context, const char *filename)
+{
+    VkResult r;
+    VkShaderModuleCreateInfo createInfo = {0};
+    VkShaderModule shaderModule;
+    void *shaderCode;
+    size_t shaderSize;
+
+    if (!read_file_to_memory(filename, NULL, &shaderSize))
+        exit(1);
+
+    shaderCode = malloc(shaderSize);
+    if (!read_file_to_memory(filename, shaderCode, &shaderSize))
+        exit(1);
+
+    createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    createInfo.codeSize = shaderSize;
+    createInfo.pCode = shaderCode;
+
+    CHECK_VK(vkCreateShaderModule(context->logicalDevice, &createInfo, NULL, &shaderModule));
+    free(shaderCode);
+    return shaderModule;
+}
+
+void create_vulkan_pipeline(MyRenderContext *context)
+{
+    VkResult r;
+    VkPipelineShaderStageCreateInfo shaderStages[2] = {0};
+    VkPipelineVertexInputStateCreateInfo vertexInputInfo = {0};
+    VkPipelineInputAssemblyStateCreateInfo inputAssemblyInfo = {0};
+    VkPipelineViewportStateCreateInfo viewportStateInfo = {0};
+    VkPipelineRasterizationStateCreateInfo rasterizerInfo = {0};
+    VkPipelineMultisampleStateCreateInfo multisamplingInfo = {0};
+    VkPipelineColorBlendAttachmentState colorBlendAttachmentInfo = {0};
+    VkPipelineColorBlendStateCreateInfo colorBlendingInfo = {0};
+    VkDynamicState dynamicStates[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynamicStateInfo = {0};
+    VkPipelineLayoutCreateInfo pipelineLayoutInfo = {0};
+    VkGraphicsPipelineCreateInfo pipelineInfo = {0};
+
+    shaderStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    shaderStages[0].module = load_vulkan_shader_module(context, "shaders/base.vert.spv");
+    shaderStages[0].pName = "main"; // Entry point name
+
+    shaderStages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    shaderStages[1].module = load_vulkan_shader_module(context, "shaders/base.frag.spv");
+    shaderStages[1].pName = "main"; // Entry point name
+
+    vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInputInfo.vertexBindingDescriptionCount = 0;
+    vertexInputInfo.vertexAttributeDescriptionCount = 0;
+
+    inputAssemblyInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssemblyInfo.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    inputAssemblyInfo.primitiveRestartEnable = VK_FALSE;
+
+    viewportStateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportStateInfo.viewportCount = 1;
+    viewportStateInfo.scissorCount = 1;
+
+    rasterizerInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizerInfo.depthClampEnable = VK_FALSE;
+    rasterizerInfo.rasterizerDiscardEnable = VK_FALSE;
+    rasterizerInfo.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizerInfo.lineWidth = 1.0f;
+    rasterizerInfo.cullMode = VK_CULL_MODE_NONE;
+    rasterizerInfo.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    rasterizerInfo.depthBiasEnable = VK_FALSE;
+
+    multisamplingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisamplingInfo.sampleShadingEnable = VK_FALSE;
+    multisamplingInfo.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    colorBlendAttachmentInfo.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    colorBlendAttachmentInfo.blendEnable = VK_FALSE;
+
+    colorBlendingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    colorBlendingInfo.logicOpEnable = VK_FALSE;
+    colorBlendingInfo.logicOp = VK_LOGIC_OP_COPY;
+    colorBlendingInfo.attachmentCount = 1;
+    colorBlendingInfo.pAttachments = &colorBlendAttachmentInfo;
+    colorBlendingInfo.blendConstants[0] = 0.0f;
+    colorBlendingInfo.blendConstants[1] = 0.0f;
+    colorBlendingInfo.blendConstants[2] = 0.0f;
+    colorBlendingInfo.blendConstants[3] = 0.0f;
+
+    dynamicStateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicStateInfo.dynamicStateCount = sizeof(dynamicStates) / sizeof(VkDynamicState);
+    dynamicStateInfo.pDynamicStates = dynamicStates;
+
+    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipelineLayoutInfo.setLayoutCount = 0;
+    pipelineLayoutInfo.pushConstantRangeCount = 0;
+
+    CHECK_VK(vkCreatePipelineLayout(context->logicalDevice, &pipelineLayoutInfo, NULL, &context->graphicsPipelineLayout));
+
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = shaderStages;
+    pipelineInfo.pVertexInputState = &vertexInputInfo;
+    pipelineInfo.pInputAssemblyState = &inputAssemblyInfo;
+    pipelineInfo.pViewportState = &viewportStateInfo;
+    pipelineInfo.pRasterizationState = &rasterizerInfo;
+    pipelineInfo.pMultisampleState = &multisamplingInfo;
+    pipelineInfo.pColorBlendState = &colorBlendingInfo;
+    pipelineInfo.pDynamicState = &dynamicStateInfo;
+    pipelineInfo.layout = context->graphicsPipelineLayout;
+    pipelineInfo.renderPass = context->renderPass;
+    pipelineInfo.subpass = 0;
+    pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
+
+    CHECK_VK(vkCreateGraphicsPipelines(context->logicalDevice, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &context->graphicsPipeline));
+
+    vkDestroyShaderModule(context->logicalDevice, shaderStages[0].module, NULL);
+    vkDestroyShaderModule(context->logicalDevice, shaderStages[1].module, NULL);
+}
+
 static void shutdown(MyRenderContext *context)
 {
+    vkDeviceWaitIdle(context->logicalDevice);
+
+    vkDestroyPipeline(context->logicalDevice, context->graphicsPipeline, NULL);
+    vkDestroyPipelineLayout(context->logicalDevice, context->graphicsPipelineLayout, NULL);
+
     for (uint32_t i = 0; i < context->swapchainInfo.imageCount; i++)
     {
         vkDestroyFramebuffer(context->logicalDevice, context->swapchainInfo.framebuffers[i].framebuffer, NULL);
@@ -970,6 +1098,7 @@ int main()
     create_vulkan_logical_device(&context, flags);
     create_vulkan_render_pass(&context);
     create_vulkan_swapchain(&context);
+    create_vulkan_pipeline(&context);
 
     printf("Press any key to quit\n");
 

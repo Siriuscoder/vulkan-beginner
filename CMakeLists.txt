@@ -49,7 +49,7 @@ if (NOT Vulkan_glslangValidator_FOUND)
     message(FATAL_ERROR "Vulkan GLSL validator is not found")
 endif()
 
-add_executable(vulkan_beginner beginner.c /usr/include/volk.c)
+add_executable(vulkan_beginner beginner.c shader_io.c /usr/include/volk.c)
 
 # Include directories for the Vulkan and Vulkan validation layers
 # libraries
