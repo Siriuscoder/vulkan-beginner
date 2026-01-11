@@ -25,6 +25,8 @@
 #define SAMPLE_USE_DISCRETE_GPU     0x00000004
 #define SAMPLE_ENABLE_VSYNC         0x00000008
 
+#define MAX_FRAMES_IN_FLIGHT        2
+
 #define CHECK_VK(func_call) if ((r = func_call) != VK_SUCCESS) { fprintf(stderr, "Failed '%s': %d\n", #func_call, r); exit(1); }
 
 static const char *sample_name = "Beginner vulkan sample";
@@ -52,6 +54,7 @@ typedef struct MySwapchainFramebuffer
     VkImage image;
     VkImageView imageView;
     VkFramebuffer framebuffer;
+    VkSemaphore presentationSemaphore;
 } MySwapchainFramebuffer;
 
 typedef struct MySwapchainInfo
@@ -63,10 +66,28 @@ typedef struct MySwapchainInfo
     MySwapchainFramebuffer *framebuffers;
 } MySwapchainInfo;
 
+typedef struct MyFrameStats
+{
+    uint64_t timerFreq;
+    uint64_t lastTimerTick;
+    uint64_t framesPerSecond;
+    uint64_t frameNumber;
+    uint32_t frameInFlightIndex;
+} MyFrameStats;
+
+typedef struct MyFrameInFlight
+{
+    VkSemaphore imageAvailableSemaphore;
+    VkFence submitCompletedFence;
+    VkCommandBuffer commandBuffer;
+    uint32_t imageIndex;
+} MyFrameInFlight;
+
 typedef struct MyRenderContext
 {
     SDL_Window *window;
     VkInstance instance;
+    VkDebugUtilsMessengerEXT debugUtilsMessenger;
     VkSurfaceKHR surface;
     VkPhysicalDevice physicalDevice;
     VkDevice logicalDevice;
@@ -81,6 +102,9 @@ typedef struct MyRenderContext
     VkRenderPass renderPass;
     VkPipelineLayout graphicsPipelineLayout;
     VkPipeline graphicsPipeline;
+    VkCommandPool commandPool;
+    MyFrameStats frameStats;
+    MyFrameInFlight framesInFlight[MAX_FRAMES_IN_FLIGHT];
 } MyRenderContext;
 
 static void init_sdl2(void)
@@ -318,6 +342,14 @@ static void create_vulkan_instance(MyRenderContext *context, const VkApplication
     instInfo.ppEnabledExtensionNames = extensions;
 
     CHECK_VK(vkCreateInstance(&instInfo, NULL, &context->instance));
+    // Load instance-level functions (must be after vkCreateInstance!)
+    volkLoadInstance(context->instance);
+
+    // Create debug messenger if supported
+    if (debugCreateInfo.sType)
+    {
+        vkCreateDebugUtilsMessengerEXT(context->instance, &debugCreateInfo, NULL, &context->debugUtilsMessenger);
+    }
 }
 
 static void create_sdl2_vulkan_window(MyRenderContext *context, uint32_t flags)
@@ -403,8 +435,6 @@ static void create_sdl2_vulkan_instance(MyRenderContext *context, uint32_t flags
     create_vulkan_instance(context, &appInfo, extensions, extCount, flags);
     free(extensions);
 
-    // Load instance-level functions (must be after vkCreateInstance!)
-    volkLoadInstance(context->instance);
     printf("VkInstance successfully created and loaded(%p)\n", (void *)context->instance);
 }
 
@@ -857,6 +887,7 @@ static void create_vulkan_swapchain(MyRenderContext *context)
     {
         VkImageViewCreateInfo createImageInfo = {0};
         VkFramebufferCreateInfo createFramebufferInfo = {0};
+        VkSemaphoreCreateInfo semaphoreInfo = {0};
 
         createImageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         createImageInfo.image = swapchainImages[i];
@@ -885,6 +916,9 @@ static void create_vulkan_swapchain(MyRenderContext *context)
 
         CHECK_VK(vkCreateFramebuffer(context->logicalDevice, &createFramebufferInfo, NULL, 
             &context->swapchainInfo.framebuffers[i].framebuffer));
+
+        semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+        CHECK_VK(vkCreateSemaphore(context->logicalDevice, &semaphoreInfo, NULL, &context->swapchainInfo.framebuffers[i].presentationSemaphore));
     }
 
     free(swapchainImages);
@@ -1053,10 +1087,53 @@ void create_vulkan_pipeline(MyRenderContext *context)
     vkDestroyShaderModule(context->logicalDevice, shaderStages[1].module, NULL);
 }
 
+static void create_vulkan_command_buffers(MyRenderContext *context)
+{
+    VkResult r;
+    VkCommandPoolCreateInfo commandPoolInfo = {0};
+    VkCommandBufferAllocateInfo commandBufferInfo = {0};
+    VkCommandBuffer commandBuffers[MAX_FRAMES_IN_FLIGHT];
+    VkSemaphoreCreateInfo semaphoreInfo = {0};
+    VkFenceCreateInfo fenceInfo = {0};
+
+    commandPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    commandPoolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    commandPoolInfo.queueFamilyIndex = context->graphicsQueue.familyIndex;
+
+    CHECK_VK(vkCreateCommandPool(context->logicalDevice, &commandPoolInfo, NULL, &context->commandPool));
+
+    commandBufferInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    commandBufferInfo.commandPool = context->commandPool; // one shared command pool for all frames in flight
+    commandBufferInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    commandBufferInfo.commandBufferCount = MAX_FRAMES_IN_FLIGHT; // command buffer for each frame in flight
+
+    CHECK_VK(vkAllocateCommandBuffers(context->logicalDevice, &commandBufferInfo, commandBuffers));
+
+    semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+
+    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        context->framesInFlight[i].commandBuffer = commandBuffers[i];
+
+        CHECK_VK(vkCreateSemaphore(context->logicalDevice, &semaphoreInfo, NULL, &context->framesInFlight[i].imageAvailableSemaphore));
+        CHECK_VK(vkCreateFence(context->logicalDevice, &fenceInfo, NULL, &context->framesInFlight[i].submitCompletedFence));
+    }
+}
+
 static void shutdown(MyRenderContext *context)
 {
+    // wait for the device to finish all executing commands
     vkDeviceWaitIdle(context->logicalDevice);
 
+    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        vkDestroySemaphore(context->logicalDevice, context->framesInFlight[i].imageAvailableSemaphore, NULL);
+        vkDestroyFence(context->logicalDevice, context->framesInFlight[i].submitCompletedFence, NULL);
+    }
+
+    vkDestroyCommandPool(context->logicalDevice, context->commandPool, NULL);
     vkDestroyPipeline(context->logicalDevice, context->graphicsPipeline, NULL);
     vkDestroyPipelineLayout(context->logicalDevice, context->graphicsPipelineLayout, NULL);
 
@@ -1064,6 +1141,7 @@ static void shutdown(MyRenderContext *context)
     {
         vkDestroyFramebuffer(context->logicalDevice, context->swapchainInfo.framebuffers[i].framebuffer, NULL);
         vkDestroyImageView(context->logicalDevice, context->swapchainInfo.framebuffers[i].imageView, NULL);
+        vkDestroySemaphore(context->logicalDevice, context->swapchainInfo.framebuffers[i].presentationSemaphore, NULL);
     }
 
     free(context->swapchainInfo.framebuffers);
@@ -1072,16 +1150,138 @@ static void shutdown(MyRenderContext *context)
     vkDestroySwapchainKHR(context->logicalDevice, context->swapchainInfo.swapchain, NULL);
     vkDestroyDevice(context->logicalDevice, NULL);
     vkDestroySurfaceKHR(context->instance, context->surface, NULL);
+    
+    if (context->debugUtilsMessenger) 
+    {
+        vkDestroyDebugUtilsMessengerEXT(context->instance, context->debugUtilsMessenger, NULL);
+    }
+
     vkDestroyInstance(context->instance, NULL);
     SDL_DestroyWindow(context->window);
     SDL_Quit();
 }
 
-int main()
+static void record_render_commands(MyRenderContext *context, MyFrameInFlight *frameInFlight)
 {
-    int8_t running = 1;
+    VkResult r;
+    VkCommandBufferBeginInfo bufferBeginInfo = {0};
+    VkRenderPassBeginInfo renderPassInfo = {0};
+    VkClearValue clearColor = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
+    VkViewport viewport = {0};
+    VkRect2D scissor = {0};
+
+    bufferBeginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+
+    // Render target parameters
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderPassInfo.renderPass = context->renderPass;
+    renderPassInfo.framebuffer = context->swapchainInfo.framebuffers[frameInFlight->imageIndex].framebuffer;
+    renderPassInfo.renderArea.offset.x = 0;
+    renderPassInfo.renderArea.offset.y = 0;
+    renderPassInfo.renderArea.extent = context->swapchainInfo.extent;
+    renderPassInfo.clearValueCount = 1;
+    renderPassInfo.pClearValues = &clearColor;
+
+    // Viewport and scissor parameters
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = (float)renderPassInfo.renderArea.extent.width;
+    viewport.height = (float)renderPassInfo.renderArea.extent.height;
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    scissor.offset = renderPassInfo.renderArea.offset;
+    scissor.extent = renderPassInfo.renderArea.extent;
+
+    // start recording render commands
+    CHECK_VK(vkBeginCommandBuffer(frameInFlight->commandBuffer, &bufferBeginInfo));
+    // begin the render pass, declare where we want to render (clears the framebuffer and sets the render area)
+    vkCmdBeginRenderPass(frameInFlight->commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+    // set viewport
+    vkCmdSetViewport(frameInFlight->commandBuffer, 0, 1, &viewport);
+    // set scissor
+    vkCmdSetScissor(frameInFlight->commandBuffer, 0, 1, &scissor);
+    // bind pipeline, bind shaders 
+    vkCmdBindPipeline(frameInFlight->commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, context->graphicsPipeline);
+    // draw batch 
+    vkCmdDraw(frameInFlight->commandBuffer, 3, 1, 0, 0);
+    // end render pass
+    vkCmdEndRenderPass(frameInFlight->commandBuffer);
+    // end recording render commands
+    CHECK_VK(vkEndCommandBuffer(frameInFlight->commandBuffer));
+}
+
+static void draw_frame(MyRenderContext *context) 
+{
+    VkResult r;
+    MyFrameInFlight *currentFrameInFlight = context->framesInFlight + context->frameStats.frameInFlightIndex;
+    VkSubmitInfo submitInfo = {0};
+    VkPresentInfoKHR presentInfo = {0};
+    VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+    VkSwapchainKHR swapChains[] = { context->swapchainInfo.swapchain };
+
+    // Wait until all previous render commands owned by the current "frame in flight" have completed 
+    vkWaitForFences(context->logicalDevice, 1, &currentFrameInFlight->submitCompletedFence, VK_TRUE, UINT64_MAX);
+    vkResetFences(context->logicalDevice, 1, &currentFrameInFlight->submitCompletedFence);
+
+    CHECK_VK(vkAcquireNextImageKHR(context->logicalDevice, context->swapchainInfo.swapchain, UINT64_MAX, 
+        currentFrameInFlight->imageAvailableSemaphore, VK_NULL_HANDLE, &currentFrameInFlight->imageIndex));
+
+    // Reset current command buffer 
+    vkResetCommandBuffer(currentFrameInFlight->commandBuffer, 0);
+
+    // Record render commands
+    record_render_commands(context, currentFrameInFlight);
+
+    // Submit render commands
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.waitSemaphoreCount = 1;
+    submitInfo.pWaitSemaphores = &currentFrameInFlight->imageAvailableSemaphore;
+    submitInfo.pWaitDstStageMask = waitStages;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &currentFrameInFlight->commandBuffer;
+    submitInfo.signalSemaphoreCount = 1;
+    submitInfo.pSignalSemaphores = &context->swapchainInfo.framebuffers[currentFrameInFlight->imageIndex].presentationSemaphore;
+    CHECK_VK(vkQueueSubmit(context->graphicsQueue.queue, 1, &submitInfo, currentFrameInFlight->submitCompletedFence));
+
+    // Present image to the screen
+    presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    presentInfo.waitSemaphoreCount = 1;
+    presentInfo.pWaitSemaphores = &context->swapchainInfo.framebuffers[currentFrameInFlight->imageIndex].presentationSemaphore;
+    presentInfo.swapchainCount = 1;
+    presentInfo.pSwapchains = swapChains;
+    presentInfo.pImageIndices = &currentFrameInFlight->imageIndex;
+    CHECK_VK(vkQueuePresentKHR(context->presentQueue.queue, &presentInfo));
+}
+
+static void update_frame_stats(MyRenderContext *context)
+{
+    uint64_t currentTimerTick = SDL_GetPerformanceCounter();
+
+    if (context->frameStats.timerFreq == 0)
+    {
+        context->frameStats.timerFreq = SDL_GetPerformanceFrequency();
+        context->frameStats.lastTimerTick = currentTimerTick;
+    }
+
+    context->frameStats.frameNumber++;
+    context->frameStats.framesPerSecond++;
+    // switch to next frame in flight
+    context->frameStats.frameInFlightIndex = context->frameStats.frameNumber % MAX_FRAMES_IN_FLIGHT;
+
+    if (currentTimerTick - context->frameStats.lastTimerTick >= context->frameStats.timerFreq)
+    {
+        context->frameStats.lastTimerTick = currentTimerTick;
+        printf("Total frames: %lu, FPS: %lu\n", context->frameStats.frameNumber, context->frameStats.framesPerSecond);
+        context->frameStats.framesPerSecond = 0;
+    }
+}
+
+int main(void)
+{
+    int8_t running = VK_TRUE;
     uint32_t flags = SAMPLE_ENABLE_VSYNC;
     MyRenderContext context = {0};
+    SDL_Event e;
 
 #ifdef VALIDATION_LAYERS
     flags |= SAMPLE_VALIDATION_LAYERS;
@@ -1099,19 +1299,20 @@ int main()
     create_vulkan_render_pass(&context);
     create_vulkan_swapchain(&context);
     create_vulkan_pipeline(&context);
+    create_vulkan_command_buffers(&context);
 
     printf("Press any key to quit\n");
 
     while (running)
     {
-        SDL_Event e;
-        while (SDL_PollEvent(&e)) 
+        draw_frame(&context);
+        update_frame_stats(&context);
+
+        while (SDL_PollEvent(&e))
         {
             if (e.type == SDL_KEYDOWN)
-                running = 0;
+                running = VK_FALSE;
         }
-
-        SDL_Delay(10);
     }
 
     shutdown(&context);
