@@ -25,6 +25,9 @@
 #define SAMPLE_USE_DISCRETE_GPU     0x00000004
 #define SAMPLE_ENABLE_VSYNC         0x00000008
 
+#define INITIAL_WINDOW_WIDTH        1024
+#define INITIAL_WINDOW_HEIGHT       768
+
 #define MAX_FRAMES_IN_FLIGHT        2
 
 #define CHECK_VK(func_call) if ((r = func_call) != VK_SUCCESS) { fprintf(stderr, "Failed '%s': %d\n", #func_call, r); exit(1); }
@@ -41,6 +44,7 @@ typedef struct MyDeviceFeatures
     uint8_t validationLayerSupport;
     uint8_t debugUtilsSupport;
     uint8_t validationFeaturesSupport;
+    uint8_t swapchainMaintenance1Support;
 } MyDeviceFeatures;
 
 typedef struct MyQueueInfo
@@ -55,6 +59,7 @@ typedef struct MySwapchainFramebuffer
     VkImageView imageView;
     VkFramebuffer framebuffer;
     VkSemaphore presentationSemaphore;
+    VkFence presentationCompletedFence;
 } MySwapchainFramebuffer;
 
 typedef struct MySwapchainInfo
@@ -105,6 +110,7 @@ typedef struct MyRenderContext
     VkCommandPool commandPool;
     MyFrameStats frameStats;
     MyFrameInFlight framesInFlight[MAX_FRAMES_IN_FLIGHT];
+    uint8_t isFullscreen;
 } MyRenderContext;
 
 static void init_sdl2(void)
@@ -356,7 +362,7 @@ static void create_sdl2_vulkan_window(MyRenderContext *context, uint32_t flags)
 {
     SDL_DisplayMode displayMode;
     int displayIndex = 0;
-    int width = 1024, height = 768;
+    int width = INITIAL_WINDOW_WIDTH, height = INITIAL_WINDOW_HEIGHT;
     uint32_t windowFlags = SDL_WINDOW_VULKAN | SDL_WINDOW_HIDDEN | SDL_WINDOW_ALLOW_HIGHDPI;
 
     if (SDL_GetDesktopDisplayMode(displayIndex, &displayMode) != 0)
@@ -372,6 +378,7 @@ static void create_sdl2_vulkan_window(MyRenderContext *context, uint32_t flags)
 
         windowFlags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
         windowFlags |= SDL_WINDOW_BORDERLESS;
+        context->isFullscreen = VK_TRUE;
     }
 
     context->window = SDL_CreateWindow(
@@ -608,6 +615,7 @@ static int check_physical_device_extensions_support(MyRenderContext *context, Vk
 {
     uint32_t extensionCount;
     VkExtensionProperties *extensions = NULL;
+    uint8_t swapchainSupport = VK_FALSE;
 
     vkEnumerateDeviceExtensionProperties(physicalDevice, NULL, &extensionCount, NULL);
     if (extensionCount == 0)
@@ -618,17 +626,21 @@ static int check_physical_device_extensions_support(MyRenderContext *context, Vk
     extensions = malloc(sizeof(VkExtensionProperties) * extensionCount);
     vkEnumerateDeviceExtensionProperties(physicalDevice, NULL, &extensionCount, extensions);
 
+    context->supportedFeatures.swapchainMaintenance1Support = VK_FALSE;
     for (uint32_t i = 0; i < extensionCount; i++)
     {
         if (strcmp(extensions[i].extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0)
         {
-            free(extensions);
-            return VK_TRUE;
+            swapchainSupport = VK_TRUE;
+        }
+        else if (strcmp(extensions[i].extensionName, VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME) == 0)
+        {
+            context->supportedFeatures.swapchainMaintenance1Support = VK_TRUE;
         }
     }
 
     free(extensions);
-    return VK_FALSE;
+    return swapchainSupport;
 }
 
 static void choose_vulkan_physical_device(MyRenderContext *context, uint32_t flags)
@@ -719,8 +731,10 @@ static void  create_vulkan_logical_device(MyRenderContext *context, uint32_t fla
     //VkPhysicalDeviceFeatures deviceFeatures = {0};
     float defaultQueuePriority = 1.0f;
     uint32_t uniqueQueueFamilyCount = 0;
-    const char *enabledExtensions[2] = {0};
+    const char *enabledExtensions[3] = {0};
     VkPhysicalDevicePresentModeFifoLatestReadyFeaturesEXT presentModeFeatures = {0};
+    VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT swapchainMaintenanceFeatures = {0};
+    void *pNext = NULL;
     uint32_t *queueFamilyIndex = calloc(context->queueFamilyCount, sizeof(uint32_t));
     
     queueFamilyIndex[context->graphicsQueue.familyIndex]++;
@@ -759,9 +773,21 @@ static void  create_vulkan_logical_device(MyRenderContext *context, uint32_t fla
         enabledExtensions[deviceInfo.enabledExtensionCount++] = VK_EXT_PRESENT_MODE_FIFO_LATEST_READY_EXTENSION_NAME;
         presentModeFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_MODE_FIFO_LATEST_READY_FEATURES_EXT;
         presentModeFeatures.presentModeFifoLatestReady = VK_TRUE;
-        deviceInfo.pNext = &presentModeFeatures;
+        presentModeFeatures.pNext = pNext;
+        pNext = &presentModeFeatures;
+    }
+
+    if (context->supportedFeatures.swapchainMaintenance1Support)
+    {
+        enabledExtensions[deviceInfo.enabledExtensionCount++] = VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME;
+        swapchainMaintenanceFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT;
+        swapchainMaintenanceFeatures.swapchainMaintenance1 = VK_TRUE;
+        swapchainMaintenanceFeatures.pNext = pNext;
+        pNext = &swapchainMaintenanceFeatures;
     }
     
+    deviceInfo.pNext = pNext;
+
     printf("Activating the following device extensions:\n");
     print_extensions(enabledExtensions, deviceInfo.enabledExtensionCount);
     CHECK_VK(vkCreateDevice(context->physicalDevice, &deviceInfo, NULL, &context->logicalDevice));
@@ -786,6 +812,7 @@ static void retrieve_vulkan_swapchain_info(MyRenderContext *context)
 {
     VkResult r;
     VkSurfaceCapabilitiesKHR surfaceCapabilities = {0};
+    int width = 0, height = 0;
 
 #if defined(VK_KHR_surface_maintenance1) && defined(VK_KHR_get_surface_capabilities2)
     // Advanced device capabilities queries
@@ -814,21 +841,12 @@ static void retrieve_vulkan_swapchain_info(MyRenderContext *context)
         CHECK_VK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(context->physicalDevice, context->surface, &surfaceCapabilities));
     }
 
-    if (surfaceCapabilities.currentExtent.width == UINT32_MAX || 
-        surfaceCapabilities.currentExtent.height == UINT32_MAX)
-    {
-        int width = 0, height = 0;
-        SDL_Vulkan_GetDrawableSize(context->window, &width, &height);
+    SDL_Vulkan_GetDrawableSize(context->window, &width, &height);
         
-        context->swapchainInfo.extent.width = CLAMP((uint32_t)width, surfaceCapabilities.minImageExtent.width, 
-            surfaceCapabilities.maxImageExtent.width); 
-        context->swapchainInfo.extent.height = CLAMP((uint32_t)height, surfaceCapabilities.minImageExtent.height, 
-            surfaceCapabilities.maxImageExtent.height);
-    }
-    else
-    {
-        context->swapchainInfo.extent = surfaceCapabilities.currentExtent;
-    }
+    context->swapchainInfo.extent.width = CLAMP((uint32_t)width, surfaceCapabilities.minImageExtent.width, 
+        surfaceCapabilities.maxImageExtent.width); 
+    context->swapchainInfo.extent.height = CLAMP((uint32_t)height, surfaceCapabilities.minImageExtent.height, 
+        surfaceCapabilities.maxImageExtent.height);
 
     // Swapchain images count
     context->swapchainInfo.imageCount = CLAMP(surfaceCapabilities.minImageCount + 1, surfaceCapabilities.minImageCount,
@@ -839,8 +857,12 @@ static void retrieve_vulkan_swapchain_info(MyRenderContext *context)
 static void create_vulkan_swapchain(MyRenderContext *context)
 {
     VkResult r;
+    VkSwapchainKHR oldSwapchain = context->swapchainInfo.swapchain;
     VkSwapchainCreateInfoKHR swapchainInfo = {0};
     VkImage *swapchainImages = NULL;
+    VkSemaphoreCreateInfo semaphoreInfo = {0};
+    VkFenceCreateInfo fenceInfo = {0};
+    VkSwapchainPresentModesCreateInfoEXT presentModesInfo = {0};
     
     retrieve_vulkan_swapchain_info(context);
 
@@ -868,7 +890,15 @@ static void create_vulkan_swapchain(MyRenderContext *context)
     swapchainInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     swapchainInfo.presentMode = context->presentMode;
     swapchainInfo.clipped = VK_TRUE;
-    swapchainInfo.oldSwapchain = VK_NULL_HANDLE;
+    swapchainInfo.oldSwapchain = oldSwapchain;
+
+    if (context->supportedFeatures.swapchainMaintenance1Support)
+    {
+        presentModesInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_MODES_CREATE_INFO_EXT;
+        presentModesInfo.presentModeCount = 1;
+        presentModesInfo.pPresentModes = &context->presentMode;
+        swapchainInfo.pNext = &presentModesInfo;
+    }
 
     // Create swapchain
     CHECK_VK(vkCreateSwapchainKHR(context->logicalDevice, &swapchainInfo, NULL, &context->swapchainInfo.swapchain));
@@ -882,12 +912,15 @@ static void create_vulkan_swapchain(MyRenderContext *context)
     CHECK_VK(vkGetSwapchainImagesKHR(context->logicalDevice, context->swapchainInfo.swapchain, 
         &context->swapchainInfo.imageCount, swapchainImages));
 
+    semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+
     // Create image views and framebuffers for each swapchain image
     for (uint32_t i = 0; i < context->swapchainInfo.imageCount; i++)
     {
         VkImageViewCreateInfo createImageInfo = {0};
         VkFramebufferCreateInfo createFramebufferInfo = {0};
-        VkSemaphoreCreateInfo semaphoreInfo = {0};
 
         createImageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         createImageInfo.image = swapchainImages[i];
@@ -917,8 +950,14 @@ static void create_vulkan_swapchain(MyRenderContext *context)
         CHECK_VK(vkCreateFramebuffer(context->logicalDevice, &createFramebufferInfo, NULL, 
             &context->swapchainInfo.framebuffers[i].framebuffer));
 
-        semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
         CHECK_VK(vkCreateSemaphore(context->logicalDevice, &semaphoreInfo, NULL, &context->swapchainInfo.framebuffers[i].presentationSemaphore));
+        CHECK_VK(vkCreateFence(context->logicalDevice, &fenceInfo, NULL, &context->swapchainInfo.framebuffers[i].presentationCompletedFence));
+    }
+
+    // Destroy old swapchain, if exists
+    if (oldSwapchain != VK_NULL_HANDLE)
+    {
+        vkDestroySwapchainKHR(context->logicalDevice, oldSwapchain, NULL);
     }
 
     free(swapchainImages);
@@ -1122,6 +1161,31 @@ static void create_vulkan_command_buffers(MyRenderContext *context)
     }
 }
 
+static void destroy_vulkan_swapchain_framebuffers(MyRenderContext *context)
+{
+    VkFence *fences = malloc(sizeof(VkFence) * context->swapchainInfo.imageCount);
+    for (uint32_t i = 0; i < context->swapchainInfo.imageCount; i++)
+    {
+        fences[i] = context->swapchainInfo.framebuffers[i].presentationCompletedFence;
+    }
+
+    // wait for all images in swapchain have been presented before destroying swapchain
+    vkWaitForFences(context->logicalDevice, context->swapchainInfo.imageCount, fences, VK_TRUE, UINT64_MAX);
+    free(fences);
+
+    for (uint32_t i = 0; i < context->swapchainInfo.imageCount; i++)
+    {
+        vkDestroyFramebuffer(context->logicalDevice, context->swapchainInfo.framebuffers[i].framebuffer, NULL);
+        vkDestroyImageView(context->logicalDevice, context->swapchainInfo.framebuffers[i].imageView, NULL);
+        vkDestroySemaphore(context->logicalDevice, context->swapchainInfo.framebuffers[i].presentationSemaphore, NULL);
+        vkDestroyFence(context->logicalDevice, context->swapchainInfo.framebuffers[i].presentationCompletedFence, NULL);
+    }
+    
+    free(context->swapchainInfo.framebuffers);
+    context->swapchainInfo.imageCount = 0;
+    context->swapchainInfo.framebuffers = NULL;
+}
+
 static void shutdown(MyRenderContext *context)
 {
     // wait for the device to finish all executing commands
@@ -1133,19 +1197,11 @@ static void shutdown(MyRenderContext *context)
         vkDestroyFence(context->logicalDevice, context->framesInFlight[i].submitCompletedFence, NULL);
     }
 
+    destroy_vulkan_swapchain_framebuffers(context);
+
     vkDestroyCommandPool(context->logicalDevice, context->commandPool, NULL);
     vkDestroyPipeline(context->logicalDevice, context->graphicsPipeline, NULL);
     vkDestroyPipelineLayout(context->logicalDevice, context->graphicsPipelineLayout, NULL);
-
-    for (uint32_t i = 0; i < context->swapchainInfo.imageCount; i++)
-    {
-        vkDestroyFramebuffer(context->logicalDevice, context->swapchainInfo.framebuffers[i].framebuffer, NULL);
-        vkDestroyImageView(context->logicalDevice, context->swapchainInfo.framebuffers[i].imageView, NULL);
-        vkDestroySemaphore(context->logicalDevice, context->swapchainInfo.framebuffers[i].presentationSemaphore, NULL);
-    }
-
-    free(context->swapchainInfo.framebuffers);
-
     vkDestroyRenderPass(context->logicalDevice, context->renderPass, NULL);
     vkDestroySwapchainKHR(context->logicalDevice, context->swapchainInfo.swapchain, NULL);
     vkDestroyDevice(context->logicalDevice, NULL);
@@ -1213,11 +1269,13 @@ static void record_render_commands(MyRenderContext *context, MyFrameInFlight *fr
 static void draw_frame(MyRenderContext *context) 
 {
     VkResult r;
+    void *pNext = NULL;
     MyFrameInFlight *currentFrameInFlight = context->framesInFlight + context->frameStats.frameInFlightIndex;
     VkSubmitInfo submitInfo = {0};
     VkPresentInfoKHR presentInfo = {0};
     VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
-    VkSwapchainKHR swapChains[] = { context->swapchainInfo.swapchain };
+    VkSwapchainPresentFenceInfoEXT presentFenceInfo = {0};
+    VkSwapchainPresentModeInfoEXT presentModeInfo = {0};
 
     // Wait until all previous render commands owned by the current "frame in flight" have completed 
     vkWaitForFences(context->logicalDevice, 1, &currentFrameInFlight->submitCompletedFence, VK_TRUE, UINT64_MAX);
@@ -1226,6 +1284,23 @@ static void draw_frame(MyRenderContext *context)
     CHECK_VK(vkAcquireNextImageKHR(context->logicalDevice, context->swapchainInfo.swapchain, UINT64_MAX, 
         currentFrameInFlight->imageAvailableSemaphore, VK_NULL_HANDLE, &currentFrameInFlight->imageIndex));
 
+    // Wait and reset presentation fence if supported
+    if (context->supportedFeatures.swapchainMaintenance1Support)
+    {
+        vkWaitForFences(context->logicalDevice, 1, &context->swapchainInfo.framebuffers[currentFrameInFlight->imageIndex].presentationCompletedFence, VK_TRUE, UINT64_MAX);
+        vkResetFences(context->logicalDevice, 1, &context->swapchainInfo.framebuffers[currentFrameInFlight->imageIndex].presentationCompletedFence);
+        presentFenceInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_FENCE_INFO_EXT;
+        presentFenceInfo.pNext = pNext;
+        presentFenceInfo.swapchainCount = 1;
+        presentFenceInfo.pFences = &context->swapchainInfo.framebuffers[currentFrameInFlight->imageIndex].presentationCompletedFence;
+
+        presentModeInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_MODE_INFO_EXT;
+        presentModeInfo.pNext = &presentFenceInfo;
+        presentModeInfo.swapchainCount = 1;
+        presentModeInfo.pPresentModes = &context->presentMode;
+
+        pNext = &presentModeInfo;
+    }
     // Reset current command buffer 
     vkResetCommandBuffer(currentFrameInFlight->commandBuffer, 0);
 
@@ -1243,12 +1318,14 @@ static void draw_frame(MyRenderContext *context)
     submitInfo.pSignalSemaphores = &context->swapchainInfo.framebuffers[currentFrameInFlight->imageIndex].presentationSemaphore;
     CHECK_VK(vkQueueSubmit(context->graphicsQueue.queue, 1, &submitInfo, currentFrameInFlight->submitCompletedFence));
 
+
     // Present image to the screen
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    presentInfo.pNext = pNext;
     presentInfo.waitSemaphoreCount = 1;
     presentInfo.pWaitSemaphores = &context->swapchainInfo.framebuffers[currentFrameInFlight->imageIndex].presentationSemaphore;
     presentInfo.swapchainCount = 1;
-    presentInfo.pSwapchains = swapChains;
+    presentInfo.pSwapchains = &context->swapchainInfo.swapchain;
     presentInfo.pImageIndices = &currentFrameInFlight->imageIndex;
     CHECK_VK(vkQueuePresentKHR(context->presentQueue.queue, &presentInfo));
 }
@@ -1274,6 +1351,26 @@ static void update_frame_stats(MyRenderContext *context)
         printf("Total frames: %lu, FPS: %lu\n", context->frameStats.frameNumber, context->frameStats.framesPerSecond);
         context->frameStats.framesPerSecond = 0;
     }
+}
+
+static void resize_sdl2_vulkan_window(MyRenderContext *context)
+{
+    vkDeviceWaitIdle(context->logicalDevice);
+    destroy_vulkan_swapchain_framebuffers(context);
+    
+    context->isFullscreen = !context->isFullscreen;
+    if (context->isFullscreen)
+    {
+        SDL_SetWindowFullscreen(context->window, SDL_WINDOW_FULLSCREEN_DESKTOP);
+    }
+    else
+    {
+        SDL_SetWindowFullscreen(context->window, 0);
+        SDL_SetWindowSize(context->window, INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT);
+    }
+
+    create_vulkan_swapchain(context);
+    SDL_ShowWindow(context->window);
 }
 
 int main(void)
@@ -1311,7 +1408,16 @@ int main(void)
         while (SDL_PollEvent(&e))
         {
             if (e.type == SDL_KEYDOWN)
-                running = VK_FALSE;
+            {
+                if (e.key.keysym.sym == SDLK_ESCAPE)
+                {
+                    running = VK_FALSE;
+                }
+                else if (e.key.keysym.sym == SDLK_f)
+                {
+                    resize_sdl2_vulkan_window(&context);
+                }
+            }
         }
     }
 
