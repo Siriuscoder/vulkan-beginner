@@ -42,11 +42,23 @@ static void print_vulkan_version(void)
     VkResult r;
     uint32_t version;
 
+    if (!vkEnumerateInstanceVersion)
+    {
+        fprintf(stderr, "Failed to get vulkan version\n");
+        exit(1);
+    }
+
     CHECK_VK(vkEnumerateInstanceVersion(&version));
     printf("Vulkan version: %d.%d.%d\n", 
         VK_API_VERSION_MAJOR(version), 
         VK_API_VERSION_MINOR(version), 
         VK_API_VERSION_PATCH(version));
+
+    if (version < VK_API_VERSION_1_3)
+    {
+        fprintf(stderr, "Uncompatible Vulkan version\n");
+        exit(1);
+    }
 }
 
 static void check_vulkan_instance_extensions_support(MyRenderContext *context)
@@ -516,7 +528,6 @@ static int check_physical_device_extensions_support(MyRenderContext *context, Vk
     vkEnumerateDeviceExtensionProperties(physicalDevice, NULL, &extensionCount, extensions);
 
     context->supportedFeatures.swapchainMaintenance1Support = VK_FALSE;
-    context->supportedFeatures.dynamicRenderingSupport = VK_FALSE;
     for (uint32_t i = 0; i < extensionCount; i++)
     {
         if (strcmp(extensions[i].extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0)
@@ -526,10 +537,6 @@ static int check_physical_device_extensions_support(MyRenderContext *context, Vk
         else if (strcmp(extensions[i].extensionName, VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME) == 0)
         {
             context->supportedFeatures.swapchainMaintenance1Support = VK_TRUE;
-        }
-        else if (strcmp(extensions[i].extensionName, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME) == 0)
-        {
-            context->supportedFeatures.dynamicRenderingSupport = VK_TRUE;
         }
     }
 
@@ -562,6 +569,12 @@ void choose_vulkan_physical_device(MyRenderContext *context, uint32_t flags)
 
         vkGetPhysicalDeviceProperties(devices[i], &props);
         vkGetPhysicalDeviceFeatures(devices[i], &features);
+
+        // Vulkan 1.3 is required
+        if (props.apiVersion < VK_API_VERSION_1_3)
+        {
+            continue;
+        }
 
         queueFamilies = get_device_supported_queue_families(devices[i], &queueFamilyCount);
         if (!find_required_queue_families(context, devices[i], queueFamilies, queueFamilyCount))
@@ -625,9 +638,11 @@ void  create_vulkan_logical_device(MyRenderContext *context, uint32_t flags)
     //VkPhysicalDeviceFeatures deviceFeatures = {0};
     float defaultQueuePriority = 1.0f;
     uint32_t uniqueQueueFamilyCount = 0;
-    const char *enabledExtensions[3] = {0};
+    const char *enabledExtensions[4] = {0};
     VkPhysicalDevicePresentModeFifoLatestReadyFeaturesEXT presentModeFeatures = {0};
     VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT swapchainMaintenanceFeatures = {0};
+    VkPhysicalDeviceDynamicRenderingFeatures dynamicRenderingFeatures = {0};
+    VkPhysicalDeviceSynchronization2Features synchronization2Features = {0};
     void *pNext = NULL;
     uint32_t *queueFamilyIndex = calloc(context->queueFamilyCount, sizeof(uint32_t));
     
@@ -679,8 +694,16 @@ void  create_vulkan_logical_device(MyRenderContext *context, uint32_t flags)
         swapchainMaintenanceFeatures.pNext = pNext;
         pNext = &swapchainMaintenanceFeatures;
     }
-    
-    deviceInfo.pNext = pNext;
+
+    dynamicRenderingFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES;
+    dynamicRenderingFeatures.dynamicRendering = VK_TRUE;
+    dynamicRenderingFeatures.pNext = pNext;
+
+    synchronization2Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES;
+    synchronization2Features.synchronization2 = VK_TRUE;
+    synchronization2Features.pNext = &dynamicRenderingFeatures;
+
+    deviceInfo.pNext = &synchronization2Features;
 
     printf("Activating the following device extensions:\n");
     print_extensions(enabledExtensions, deviceInfo.enabledExtensionCount);
@@ -833,16 +856,19 @@ void create_vulkan_swapchain(MyRenderContext *context)
         CHECK_VK(vkCreateImageView(context->logicalDevice, &createImageInfo, NULL, &context->swapchainInfo.framebuffers[i].imageView));
         context->swapchainInfo.framebuffers[i].image = swapchainImages[i];
 
-        createFramebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        createFramebufferInfo.renderPass = context->renderPass;
-        createFramebufferInfo.attachmentCount = 1;
-        createFramebufferInfo.pAttachments = &context->swapchainInfo.framebuffers[i].imageView;
-        createFramebufferInfo.width = context->swapchainInfo.extent.width;
-        createFramebufferInfo.height = context->swapchainInfo.extent.height;
-        createFramebufferInfo.layers = 1;
+        if (context->renderPass)
+        {
+            createFramebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            createFramebufferInfo.renderPass = context->renderPass;
+            createFramebufferInfo.attachmentCount = 1;
+            createFramebufferInfo.pAttachments = &context->swapchainInfo.framebuffers[i].imageView;
+            createFramebufferInfo.width = context->swapchainInfo.extent.width;
+            createFramebufferInfo.height = context->swapchainInfo.extent.height;
+            createFramebufferInfo.layers = 1;
 
-        CHECK_VK(vkCreateFramebuffer(context->logicalDevice, &createFramebufferInfo, NULL, 
-            &context->swapchainInfo.framebuffers[i].framebuffer));
+            CHECK_VK(vkCreateFramebuffer(context->logicalDevice, &createFramebufferInfo, NULL, 
+                &context->swapchainInfo.framebuffers[i].framebuffer));
+        }
 
         CHECK_VK(vkCreateSemaphore(context->logicalDevice, &semaphoreInfo, NULL, &context->swapchainInfo.framebuffers[i].presentationSemaphore));
         CHECK_VK(vkCreateFence(context->logicalDevice, &fenceInfo, NULL, &context->swapchainInfo.framebuffers[i].presentationCompletedFence));
@@ -953,9 +979,11 @@ void draw_frame(MyRenderContext *context)
     VkResult r;
     void *pNext = NULL;
     MyFrameInFlight *currentFrameInFlight = context->framesInFlight + context->frameStats.frameInFlightIndex;
-    VkSubmitInfo submitInfo = {0};
+    VkSubmitInfo2 submitInfo = {0};
+    VkSemaphoreSubmitInfo waitSemaphoreInfo = {0};
+    VkSemaphoreSubmitInfo signalSemaphoreInfo = {0};
+    VkCommandBufferSubmitInfo commandBufferInfo = {0};
     VkPresentInfoKHR presentInfo = {0};
-    VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
     VkSwapchainPresentFenceInfoEXT presentFenceInfo = {0};
     VkSwapchainPresentModeInfoEXT presentModeInfo = {0};
 
@@ -989,17 +1017,26 @@ void draw_frame(MyRenderContext *context)
     // Record render commands
     record_render_commands(context, currentFrameInFlight);
 
-    // Submit render commands
-    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submitInfo.waitSemaphoreCount = 1;
-    submitInfo.pWaitSemaphores = &currentFrameInFlight->imageAvailableSemaphore;
-    submitInfo.pWaitDstStageMask = waitStages;
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &currentFrameInFlight->commandBuffer;
-    submitInfo.signalSemaphoreCount = 1;
-    submitInfo.pSignalSemaphores = &context->swapchainInfo.framebuffers[currentFrameInFlight->imageIndex].presentationSemaphore;
-    CHECK_VK(vkQueueSubmit(context->graphicsQueue.queue, 1, &submitInfo, currentFrameInFlight->submitCompletedFence));
 
+    waitSemaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+    waitSemaphoreInfo.semaphore = currentFrameInFlight->imageAvailableSemaphore;
+    waitSemaphoreInfo.stageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT; // Do not execute any submited commands until the swapchain image will be available
+    signalSemaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+    signalSemaphoreInfo.semaphore = context->swapchainInfo.framebuffers[currentFrameInFlight->imageIndex].presentationSemaphore;
+    signalSemaphoreInfo.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT; // Signal after all submited commands have been processed
+
+    commandBufferInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+    commandBufferInfo.commandBuffer = currentFrameInFlight->commandBuffer;
+
+    // Submit render commands
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+    submitInfo.waitSemaphoreInfoCount = 1;
+    submitInfo.pWaitSemaphoreInfos = &waitSemaphoreInfo;
+    submitInfo.signalSemaphoreInfoCount = 1;
+    submitInfo.pSignalSemaphoreInfos = &signalSemaphoreInfo;
+    submitInfo.commandBufferInfoCount = 1;
+    submitInfo.pCommandBufferInfos = &commandBufferInfo;
+    CHECK_VK(vkQueueSubmit2(context->graphicsQueue.queue, 1, &submitInfo, currentFrameInFlight->submitCompletedFence));
 
     // Present image to the screen
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;

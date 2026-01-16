@@ -1,51 +1,6 @@
 #include "common.h"
 
-static const char *sample_name = "Minimal vulkan sample";
-
-
-static void create_vulkan_render_pass(MyRenderContext *context)
-{
-    VkResult r;
-    VkAttachmentDescription colorAttachment = {0};
-    VkAttachmentReference colorAttachmentRef = {0};
-    VkSubpassDescription subpass = {0};
-    VkSubpassDependency dependency = {0};
-    VkRenderPassCreateInfo renderPassInfo = {0};
-
-    colorAttachment.format = context->surfaceFormat.format;
-    colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-
-    // Subpass attachment refering to color attachment 0
-    colorAttachmentRef.attachment = 0;
-    colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
-    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpass.colorAttachmentCount = 1;
-    subpass.pColorAttachments = &colorAttachmentRef;
-
-    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
-    dependency.dstSubpass = 0;
-    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dependency.srcAccessMask = 0;
-    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    renderPassInfo.attachmentCount = 1;
-    renderPassInfo.pAttachments = &colorAttachment;
-    renderPassInfo.subpassCount = 1;
-    renderPassInfo.pSubpasses = &subpass;
-    renderPassInfo.dependencyCount = 1;
-    renderPassInfo.pDependencies = &dependency;
-
-    CHECK_VK(vkCreateRenderPass(context->logicalDevice, &renderPassInfo, NULL, &context->renderPass));
-}
+static const char *sample_name = "Dynamic render vulkan sample";
 
 void create_vulkan_pipeline(MyRenderContext *context)
 {
@@ -62,6 +17,7 @@ void create_vulkan_pipeline(MyRenderContext *context)
     VkPipelineDynamicStateCreateInfo dynamicStateInfo = {0};
     VkPipelineLayoutCreateInfo pipelineLayoutInfo = {0};
     VkGraphicsPipelineCreateInfo pipelineInfo = {0};
+    VkPipelineRenderingCreateInfo pipelineRenderingCreateInfo = {0};
 
     shaderStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     shaderStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
@@ -121,7 +77,12 @@ void create_vulkan_pipeline(MyRenderContext *context)
 
     CHECK_VK(vkCreatePipelineLayout(context->logicalDevice, &pipelineLayoutInfo, NULL, &context->graphicsPipelineLayout));
 
+    pipelineRenderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+    pipelineRenderingCreateInfo.colorAttachmentCount = 1;
+    pipelineRenderingCreateInfo.pColorAttachmentFormats = &context->surfaceFormat.format;
+
     pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.pNext = &pipelineRenderingCreateInfo;
     pipelineInfo.stageCount = 2;
     pipelineInfo.pStages = shaderStages;
     pipelineInfo.pVertexInputState = &vertexInputInfo;
@@ -132,9 +93,6 @@ void create_vulkan_pipeline(MyRenderContext *context)
     pipelineInfo.pColorBlendState = &colorBlendingInfo;
     pipelineInfo.pDynamicState = &dynamicStateInfo;
     pipelineInfo.layout = context->graphicsPipelineLayout;
-    pipelineInfo.renderPass = context->renderPass;
-    pipelineInfo.subpass = 0;
-    pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
 
     CHECK_VK(vkCreateGraphicsPipelines(context->logicalDevice, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &context->graphicsPipeline));
 
@@ -145,38 +103,65 @@ void create_vulkan_pipeline(MyRenderContext *context)
 void record_render_commands(MyRenderContext *context, MyFrameInFlight *frameInFlight)
 {
     VkResult r;
+    VkRenderingAttachmentInfo renderingAttachment = {0};
+    VkRenderingInfo renderingInfo = {0};
+    VkImageMemoryBarrier2 imageLayoutBarrier = {0};
+    VkDependencyInfo dependencyInfo = {0};
     VkCommandBufferBeginInfo bufferBeginInfo = {0};
-    VkRenderPassBeginInfo renderPassInfo = {0};
     VkClearValue clearColor = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
     VkViewport viewport = {0};
     VkRect2D scissor = {0};
 
-    bufferBeginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    // Describe render attachment
+    renderingAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    renderingAttachment.imageView = context->swapchainInfo.framebuffers[frameInFlight->imageIndex].imageView;
+    renderingAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    renderingAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    renderingAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    renderingAttachment.clearValue = clearColor;
 
-    // Render target parameters
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderPassInfo.renderPass = context->renderPass;
-    renderPassInfo.framebuffer = context->swapchainInfo.framebuffers[frameInFlight->imageIndex].framebuffer;
-    renderPassInfo.renderArea.offset.x = 0;
-    renderPassInfo.renderArea.offset.y = 0;
-    renderPassInfo.renderArea.extent = context->swapchainInfo.extent;
-    renderPassInfo.clearValueCount = 1;
-    renderPassInfo.pClearValues = &clearColor;
+    renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+    renderingInfo.renderArea.offset.x = 0;
+    renderingInfo.renderArea.offset.y = 0;
+    renderingInfo.renderArea.extent = context->swapchainInfo.extent;
+    renderingInfo.layerCount = 1;
+    renderingInfo.colorAttachmentCount = 1;
+    renderingInfo.pColorAttachments = &renderingAttachment;
+
+    bufferBeginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    // Image layout transition barrier, undefined -> color attachment optimal
+    imageLayoutBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+    imageLayoutBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    imageLayoutBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    imageLayoutBarrier.srcStageMask  = VK_PIPELINE_STAGE_2_NONE; // no matter
+    imageLayoutBarrier.srcAccessMask = VK_ACCESS_2_NONE_KHR;
+    imageLayoutBarrier.dstStageMask  = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+    imageLayoutBarrier.dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT;
+    imageLayoutBarrier.image = context->swapchainInfo.framebuffers[frameInFlight->imageIndex].image;
+    imageLayoutBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    imageLayoutBarrier.subresourceRange.levelCount = 1;
+    imageLayoutBarrier.subresourceRange.layerCount = 1;
+
+    dependencyInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    dependencyInfo.imageMemoryBarrierCount = 1;
+    dependencyInfo.pImageMemoryBarriers = &imageLayoutBarrier;
 
     // Viewport and scissor parameters
     viewport.x = 0.0f;
     viewport.y = 0.0f;
-    viewport.width = (float)renderPassInfo.renderArea.extent.width;
-    viewport.height = (float)renderPassInfo.renderArea.extent.height;
+    viewport.width = (float)renderingInfo.renderArea.extent.width;
+    viewport.height = (float)renderingInfo.renderArea.extent.height;
     viewport.minDepth = 0.0f;
     viewport.maxDepth = 1.0f;
-    scissor.offset = renderPassInfo.renderArea.offset;
-    scissor.extent = renderPassInfo.renderArea.extent;
+    scissor.offset = renderingInfo.renderArea.offset;
+    scissor.extent = renderingInfo.renderArea.extent;
 
     // start recording render commands
     CHECK_VK(vkBeginCommandBuffer(frameInFlight->commandBuffer, &bufferBeginInfo));
-    // begin the render pass, declare where we want to render (clears the framebuffer and sets the render area)
-    vkCmdBeginRenderPass(frameInFlight->commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+    // Image layout transition barrier, undefined -> color attachment optimal
+    vkCmdPipelineBarrier2(frameInFlight->commandBuffer, &dependencyInfo);
+    // begin render pass
+    vkCmdBeginRendering(frameInFlight->commandBuffer, &renderingInfo);
     // set viewport
     vkCmdSetViewport(frameInFlight->commandBuffer, 0, 1, &viewport);
     // set scissor
@@ -186,7 +171,16 @@ void record_render_commands(MyRenderContext *context, MyFrameInFlight *frameInFl
     // draw batch 
     vkCmdDraw(frameInFlight->commandBuffer, 3, 1, 0, 0);
     // end render pass
-    vkCmdEndRenderPass(frameInFlight->commandBuffer);
+    vkCmdEndRendering(frameInFlight->commandBuffer);
+
+    imageLayoutBarrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    imageLayoutBarrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    imageLayoutBarrier.srcStageMask  = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+    imageLayoutBarrier.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+    imageLayoutBarrier.dstStageMask  = VK_PIPELINE_STAGE_2_NONE; // not matter
+    imageLayoutBarrier.dstAccessMask = VK_ACCESS_2_NONE_KHR;
+    // Image layout transition barrier, color attachment optimal -> present source
+    vkCmdPipelineBarrier2(frameInFlight->commandBuffer, &dependencyInfo);
     // end recording render commands
     CHECK_VK(vkEndCommandBuffer(frameInFlight->commandBuffer));
 }
@@ -212,7 +206,6 @@ int main(void)
     create_sdl2_vulkan_surface(&context);
     choose_vulkan_physical_device(&context, flags);
     create_vulkan_logical_device(&context, flags);
-    create_vulkan_render_pass(&context);
     create_vulkan_swapchain(&context);
     create_vulkan_pipeline(&context);
     create_vulkan_command_buffers(&context);
