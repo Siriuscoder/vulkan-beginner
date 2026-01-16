@@ -39,3 +39,27 @@ int read_file_to_memory(const char* path, void *buffer, size_t* size)
     fclose(file);
     return 1;
 }
+
+VkShaderModule load_vulkan_shader_module(VkDevice logicalDevice, const char *filename)
+{
+    VkResult r;
+    VkShaderModuleCreateInfo createInfo = {0};
+    VkShaderModule shaderModule;
+    void *shaderCode;
+    size_t shaderSize;
+
+    if (!read_file_to_memory(filename, NULL, &shaderSize))
+        exit(1);
+
+    shaderCode = malloc(shaderSize);
+    if (!read_file_to_memory(filename, shaderCode, &shaderSize))
+        exit(1);
+
+    createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    createInfo.codeSize = shaderSize;
+    createInfo.pCode = shaderCode;
+
+    CHECK_VK(vkCreateShaderModule(logicalDevice, &createInfo, NULL, &shaderModule));
+    free(shaderCode);
+    return shaderModule;
+}

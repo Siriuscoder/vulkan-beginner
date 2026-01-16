@@ -1,119 +1,8 @@
-#include <stdio.h>
-#include <stdlib.h>
+#include "common.h"
 
-#include <volk.h>
-
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_vulkan.h>
-
-#include "shader_io.h"
-
-#ifndef MIN
-#   define MIN(a,b) (((a)<(b))?(a):(b))
-#endif
-
-#ifndef MAX
-#   define MAX(a,b) (((a)>(b))?(a):(b))
-#endif
-
-#ifndef CLAMP
-#   define CLAMP(value, min, max) MIN(MAX(value, min), max)
-#endif
-
-#define SAMPLE_FULLSCREEN           0x00000001
-#define SAMPLE_VALIDATION_LAYERS    0x00000002
-#define SAMPLE_USE_DISCRETE_GPU     0x00000004
-#define SAMPLE_ENABLE_VSYNC         0x00000008
-
-#define INITIAL_WINDOW_WIDTH        1024
-#define INITIAL_WINDOW_HEIGHT       768
-
-#define MAX_FRAMES_IN_FLIGHT        2
-
-#define CHECK_VK(func_call) if ((r = func_call) != VK_SUCCESS) { fprintf(stderr, "Failed '%s': %d\n", #func_call, r); exit(1); }
-
-static const char *sample_name = "Beginner vulkan sample";
 static const char *VK_LAYER_KHRONOS_validation_name = "VK_LAYER_KHRONOS_validation";
 
-typedef struct MyDeviceFeatures
-{
-    VkPhysicalDeviceFeatures features;
-    VkPhysicalDeviceLimits limits;
-    uint8_t surfaceMaintenance1Support;
-    uint8_t getSurfaceCapabilities2Support;
-    uint8_t validationLayerSupport;
-    uint8_t debugUtilsSupport;
-    uint8_t validationFeaturesSupport;
-    uint8_t swapchainMaintenance1Support;
-} MyDeviceFeatures;
-
-typedef struct MyQueueInfo
-{
-    VkQueue queue;
-    uint32_t familyIndex;
-} MyQueueInfo;
-
-typedef struct MySwapchainFramebuffer
-{
-    VkImage image;
-    VkImageView imageView;
-    VkFramebuffer framebuffer;
-    VkSemaphore presentationSemaphore;
-    VkFence presentationCompletedFence;
-} MySwapchainFramebuffer;
-
-typedef struct MySwapchainInfo
-{
-    VkExtent2D extent;
-    VkSurfaceTransformFlagBitsKHR transformFlags;
-    VkSwapchainKHR swapchain;
-    uint32_t imageCount;
-    MySwapchainFramebuffer *framebuffers;
-} MySwapchainInfo;
-
-typedef struct MyFrameStats
-{
-    uint64_t timerFreq;
-    uint64_t lastTimerTick;
-    uint64_t framesPerSecond;
-    uint64_t frameNumber;
-    uint32_t frameInFlightIndex;
-} MyFrameStats;
-
-typedef struct MyFrameInFlight
-{
-    VkSemaphore imageAvailableSemaphore;
-    VkFence submitCompletedFence;
-    VkCommandBuffer commandBuffer;
-    uint32_t imageIndex;
-} MyFrameInFlight;
-
-typedef struct MyRenderContext
-{
-    SDL_Window *window;
-    VkInstance instance;
-    VkDebugUtilsMessengerEXT debugUtilsMessenger;
-    VkSurfaceKHR surface;
-    VkPhysicalDevice physicalDevice;
-    VkDevice logicalDevice;
-    VkSurfaceFormatKHR surfaceFormat;
-    MyDeviceFeatures supportedFeatures;
-    VkPresentModeKHR presentMode;
-    MySwapchainInfo swapchainInfo;
-    uint32_t queueFamilyCount;
-    MyQueueInfo graphicsQueue;
-    MyQueueInfo presentQueue;
-    MyQueueInfo transferQueue;
-    VkRenderPass renderPass;
-    VkPipelineLayout graphicsPipelineLayout;
-    VkPipeline graphicsPipeline;
-    VkCommandPool commandPool;
-    MyFrameStats frameStats;
-    MyFrameInFlight framesInFlight[MAX_FRAMES_IN_FLIGHT];
-    uint8_t isFullscreen;
-} MyRenderContext;
-
-static void init_sdl2(void)
+void init_sdl2(void)
 {
 #ifdef SDL_HINT_APP_NAME
     SDL_SetHint(SDL_HINT_APP_NAME, "Vulkan beginner sample"); 
@@ -358,7 +247,7 @@ static void create_vulkan_instance(MyRenderContext *context, const VkApplication
     }
 }
 
-static void create_sdl2_vulkan_window(MyRenderContext *context, uint32_t flags)
+void create_sdl2_vulkan_window(MyRenderContext *context, uint32_t flags)
 {
     SDL_DisplayMode displayMode;
     int displayIndex = 0;
@@ -382,7 +271,7 @@ static void create_sdl2_vulkan_window(MyRenderContext *context, uint32_t flags)
     }
 
     context->window = SDL_CreateWindow(
-        sample_name,
+        context->sampleName,
         SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED,
         width,
@@ -403,7 +292,7 @@ static void create_sdl2_vulkan_window(MyRenderContext *context, uint32_t flags)
     SDL_ShowWindow(context->window);
 }
 
-static void create_sdl2_vulkan_instance(MyRenderContext *context, uint32_t flags)
+void create_sdl2_vulkan_instance(MyRenderContext *context, uint32_t flags)
 {
     uint32_t extCount = 0;
     const char **extensions = NULL;
@@ -433,7 +322,7 @@ static void create_sdl2_vulkan_instance(MyRenderContext *context, uint32_t flags
     }
 
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    appInfo.pApplicationName = sample_name;
+    appInfo.pApplicationName = context->sampleName;
     appInfo.apiVersion = VK_API_VERSION_1_3;
     appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.pEngineName = "No Engine";
@@ -445,7 +334,7 @@ static void create_sdl2_vulkan_instance(MyRenderContext *context, uint32_t flags
     printf("VkInstance successfully created and loaded(%p)\n", (void *)context->instance);
 }
 
-static void create_sdl2_vulkan_surface(MyRenderContext *context)
+void create_sdl2_vulkan_surface(MyRenderContext *context)
 {
     if (SDL_Vulkan_CreateSurface(context->window, context->instance, &context->surface) != SDL_TRUE)
     {
@@ -627,6 +516,7 @@ static int check_physical_device_extensions_support(MyRenderContext *context, Vk
     vkEnumerateDeviceExtensionProperties(physicalDevice, NULL, &extensionCount, extensions);
 
     context->supportedFeatures.swapchainMaintenance1Support = VK_FALSE;
+    context->supportedFeatures.dynamicRenderingSupport = VK_FALSE;
     for (uint32_t i = 0; i < extensionCount; i++)
     {
         if (strcmp(extensions[i].extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0)
@@ -637,13 +527,17 @@ static int check_physical_device_extensions_support(MyRenderContext *context, Vk
         {
             context->supportedFeatures.swapchainMaintenance1Support = VK_TRUE;
         }
+        else if (strcmp(extensions[i].extensionName, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME) == 0)
+        {
+            context->supportedFeatures.dynamicRenderingSupport = VK_TRUE;
+        }
     }
 
     free(extensions);
     return swapchainSupport;
 }
 
-static void choose_vulkan_physical_device(MyRenderContext *context, uint32_t flags)
+void choose_vulkan_physical_device(MyRenderContext *context, uint32_t flags)
 {
     VkResult r;
     uint32_t deviceCount = 0;
@@ -723,7 +617,7 @@ static void choose_vulkan_physical_device(MyRenderContext *context, uint32_t fla
     free(devices);
 }
 
-static void  create_vulkan_logical_device(MyRenderContext *context, uint32_t flags)
+void  create_vulkan_logical_device(MyRenderContext *context, uint32_t flags)
 {
     VkResult r;
     VkDeviceQueueCreateInfo queueInfo[3] = {0};
@@ -854,7 +748,7 @@ static void retrieve_vulkan_swapchain_info(MyRenderContext *context)
     context->swapchainInfo.transformFlags = surfaceCapabilities.currentTransform;
 }
 
-static void create_vulkan_swapchain(MyRenderContext *context)
+void create_vulkan_swapchain(MyRenderContext *context)
 {
     VkResult r;
     VkSwapchainKHR oldSwapchain = context->swapchainInfo.swapchain;
@@ -963,170 +857,7 @@ static void create_vulkan_swapchain(MyRenderContext *context)
     free(swapchainImages);
 }
 
-static void create_vulkan_render_pass(MyRenderContext *context)
-{
-    VkResult r;
-    VkAttachmentDescription colorAttachment = {0};
-    VkAttachmentReference colorAttachmentRef = {0};
-    VkSubpassDescription subpass = {0};
-    VkSubpassDependency dependency = {0};
-    VkRenderPassCreateInfo renderPassInfo = {0};
-
-    colorAttachment.format = context->surfaceFormat.format;
-    colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-
-    // Subpass attachment refering to color attachment 0
-    colorAttachmentRef.attachment = 0;
-    colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
-    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpass.colorAttachmentCount = 1;
-    subpass.pColorAttachments = &colorAttachmentRef;
-
-    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
-    dependency.dstSubpass = 0;
-    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dependency.srcAccessMask = 0;
-    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    renderPassInfo.attachmentCount = 1;
-    renderPassInfo.pAttachments = &colorAttachment;
-    renderPassInfo.subpassCount = 1;
-    renderPassInfo.pSubpasses = &subpass;
-    renderPassInfo.dependencyCount = 1;
-    renderPassInfo.pDependencies = &dependency;
-
-    CHECK_VK(vkCreateRenderPass(context->logicalDevice, &renderPassInfo, NULL, &context->renderPass));
-}
-
-VkShaderModule load_vulkan_shader_module(MyRenderContext *context, const char *filename)
-{
-    VkResult r;
-    VkShaderModuleCreateInfo createInfo = {0};
-    VkShaderModule shaderModule;
-    void *shaderCode;
-    size_t shaderSize;
-
-    if (!read_file_to_memory(filename, NULL, &shaderSize))
-        exit(1);
-
-    shaderCode = malloc(shaderSize);
-    if (!read_file_to_memory(filename, shaderCode, &shaderSize))
-        exit(1);
-
-    createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-    createInfo.codeSize = shaderSize;
-    createInfo.pCode = shaderCode;
-
-    CHECK_VK(vkCreateShaderModule(context->logicalDevice, &createInfo, NULL, &shaderModule));
-    free(shaderCode);
-    return shaderModule;
-}
-
-void create_vulkan_pipeline(MyRenderContext *context)
-{
-    VkResult r;
-    VkPipelineShaderStageCreateInfo shaderStages[2] = {0};
-    VkPipelineVertexInputStateCreateInfo vertexInputInfo = {0};
-    VkPipelineInputAssemblyStateCreateInfo inputAssemblyInfo = {0};
-    VkPipelineViewportStateCreateInfo viewportStateInfo = {0};
-    VkPipelineRasterizationStateCreateInfo rasterizerInfo = {0};
-    VkPipelineMultisampleStateCreateInfo multisamplingInfo = {0};
-    VkPipelineColorBlendAttachmentState colorBlendAttachmentInfo = {0};
-    VkPipelineColorBlendStateCreateInfo colorBlendingInfo = {0};
-    VkDynamicState dynamicStates[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
-    VkPipelineDynamicStateCreateInfo dynamicStateInfo = {0};
-    VkPipelineLayoutCreateInfo pipelineLayoutInfo = {0};
-    VkGraphicsPipelineCreateInfo pipelineInfo = {0};
-
-    shaderStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    shaderStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-    shaderStages[0].module = load_vulkan_shader_module(context, "shaders/base.vert.spv");
-    shaderStages[0].pName = "main"; // Entry point name
-
-    shaderStages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    shaderStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    shaderStages[1].module = load_vulkan_shader_module(context, "shaders/base.frag.spv");
-    shaderStages[1].pName = "main"; // Entry point name
-
-    vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertexInputInfo.vertexBindingDescriptionCount = 0;
-    vertexInputInfo.vertexAttributeDescriptionCount = 0;
-
-    inputAssemblyInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    inputAssemblyInfo.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    inputAssemblyInfo.primitiveRestartEnable = VK_FALSE;
-
-    viewportStateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-    viewportStateInfo.viewportCount = 1;
-    viewportStateInfo.scissorCount = 1;
-
-    rasterizerInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-    rasterizerInfo.depthClampEnable = VK_FALSE;
-    rasterizerInfo.rasterizerDiscardEnable = VK_FALSE;
-    rasterizerInfo.polygonMode = VK_POLYGON_MODE_FILL;
-    rasterizerInfo.lineWidth = 1.0f;
-    rasterizerInfo.cullMode = VK_CULL_MODE_NONE;
-    rasterizerInfo.frontFace = VK_FRONT_FACE_CLOCKWISE;
-    rasterizerInfo.depthBiasEnable = VK_FALSE;
-
-    multisamplingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    multisamplingInfo.sampleShadingEnable = VK_FALSE;
-    multisamplingInfo.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-    colorBlendAttachmentInfo.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-    colorBlendAttachmentInfo.blendEnable = VK_FALSE;
-
-    colorBlendingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    colorBlendingInfo.logicOpEnable = VK_FALSE;
-    colorBlendingInfo.logicOp = VK_LOGIC_OP_COPY;
-    colorBlendingInfo.attachmentCount = 1;
-    colorBlendingInfo.pAttachments = &colorBlendAttachmentInfo;
-    colorBlendingInfo.blendConstants[0] = 0.0f;
-    colorBlendingInfo.blendConstants[1] = 0.0f;
-    colorBlendingInfo.blendConstants[2] = 0.0f;
-    colorBlendingInfo.blendConstants[3] = 0.0f;
-
-    dynamicStateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    dynamicStateInfo.dynamicStateCount = sizeof(dynamicStates) / sizeof(VkDynamicState);
-    dynamicStateInfo.pDynamicStates = dynamicStates;
-
-    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipelineLayoutInfo.setLayoutCount = 0;
-    pipelineLayoutInfo.pushConstantRangeCount = 0;
-
-    CHECK_VK(vkCreatePipelineLayout(context->logicalDevice, &pipelineLayoutInfo, NULL, &context->graphicsPipelineLayout));
-
-    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    pipelineInfo.stageCount = 2;
-    pipelineInfo.pStages = shaderStages;
-    pipelineInfo.pVertexInputState = &vertexInputInfo;
-    pipelineInfo.pInputAssemblyState = &inputAssemblyInfo;
-    pipelineInfo.pViewportState = &viewportStateInfo;
-    pipelineInfo.pRasterizationState = &rasterizerInfo;
-    pipelineInfo.pMultisampleState = &multisamplingInfo;
-    pipelineInfo.pColorBlendState = &colorBlendingInfo;
-    pipelineInfo.pDynamicState = &dynamicStateInfo;
-    pipelineInfo.layout = context->graphicsPipelineLayout;
-    pipelineInfo.renderPass = context->renderPass;
-    pipelineInfo.subpass = 0;
-    pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
-
-    CHECK_VK(vkCreateGraphicsPipelines(context->logicalDevice, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &context->graphicsPipeline));
-
-    vkDestroyShaderModule(context->logicalDevice, shaderStages[0].module, NULL);
-    vkDestroyShaderModule(context->logicalDevice, shaderStages[1].module, NULL);
-}
-
-static void create_vulkan_command_buffers(MyRenderContext *context)
+void create_vulkan_command_buffers(MyRenderContext *context)
 {
     VkResult r;
     VkCommandPoolCreateInfo commandPoolInfo = {0};
@@ -1186,7 +917,7 @@ static void destroy_vulkan_swapchain_framebuffers(MyRenderContext *context)
     context->swapchainInfo.framebuffers = NULL;
 }
 
-static void shutdown(MyRenderContext *context)
+void destroy_context(MyRenderContext *context)
 {
     // wait for the device to finish all executing commands
     vkDeviceWaitIdle(context->logicalDevice);
@@ -1217,56 +948,7 @@ static void shutdown(MyRenderContext *context)
     SDL_Quit();
 }
 
-static void record_render_commands(MyRenderContext *context, MyFrameInFlight *frameInFlight)
-{
-    VkResult r;
-    VkCommandBufferBeginInfo bufferBeginInfo = {0};
-    VkRenderPassBeginInfo renderPassInfo = {0};
-    VkClearValue clearColor = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
-    VkViewport viewport = {0};
-    VkRect2D scissor = {0};
-
-    bufferBeginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-
-    // Render target parameters
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderPassInfo.renderPass = context->renderPass;
-    renderPassInfo.framebuffer = context->swapchainInfo.framebuffers[frameInFlight->imageIndex].framebuffer;
-    renderPassInfo.renderArea.offset.x = 0;
-    renderPassInfo.renderArea.offset.y = 0;
-    renderPassInfo.renderArea.extent = context->swapchainInfo.extent;
-    renderPassInfo.clearValueCount = 1;
-    renderPassInfo.pClearValues = &clearColor;
-
-    // Viewport and scissor parameters
-    viewport.x = 0.0f;
-    viewport.y = 0.0f;
-    viewport.width = (float)renderPassInfo.renderArea.extent.width;
-    viewport.height = (float)renderPassInfo.renderArea.extent.height;
-    viewport.minDepth = 0.0f;
-    viewport.maxDepth = 1.0f;
-    scissor.offset = renderPassInfo.renderArea.offset;
-    scissor.extent = renderPassInfo.renderArea.extent;
-
-    // start recording render commands
-    CHECK_VK(vkBeginCommandBuffer(frameInFlight->commandBuffer, &bufferBeginInfo));
-    // begin the render pass, declare where we want to render (clears the framebuffer and sets the render area)
-    vkCmdBeginRenderPass(frameInFlight->commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-    // set viewport
-    vkCmdSetViewport(frameInFlight->commandBuffer, 0, 1, &viewport);
-    // set scissor
-    vkCmdSetScissor(frameInFlight->commandBuffer, 0, 1, &scissor);
-    // bind pipeline, bind shaders 
-    vkCmdBindPipeline(frameInFlight->commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, context->graphicsPipeline);
-    // draw batch 
-    vkCmdDraw(frameInFlight->commandBuffer, 3, 1, 0, 0);
-    // end render pass
-    vkCmdEndRenderPass(frameInFlight->commandBuffer);
-    // end recording render commands
-    CHECK_VK(vkEndCommandBuffer(frameInFlight->commandBuffer));
-}
-
-static void draw_frame(MyRenderContext *context) 
+void draw_frame(MyRenderContext *context) 
 {
     VkResult r;
     void *pNext = NULL;
@@ -1330,7 +1012,7 @@ static void draw_frame(MyRenderContext *context)
     CHECK_VK(vkQueuePresentKHR(context->presentQueue.queue, &presentInfo));
 }
 
-static void update_frame_stats(MyRenderContext *context)
+void update_frame_stats(MyRenderContext *context)
 {
     uint64_t currentTimerTick = SDL_GetPerformanceCounter();
 
@@ -1353,7 +1035,7 @@ static void update_frame_stats(MyRenderContext *context)
     }
 }
 
-static void resize_sdl2_vulkan_window(MyRenderContext *context)
+void resize_sdl2_vulkan_window(MyRenderContext *context)
 {
     vkDeviceWaitIdle(context->logicalDevice);
     destroy_vulkan_swapchain_framebuffers(context);
@@ -1371,56 +1053,4 @@ static void resize_sdl2_vulkan_window(MyRenderContext *context)
 
     create_vulkan_swapchain(context);
     SDL_ShowWindow(context->window);
-}
-
-int main(void)
-{
-    int8_t running = VK_TRUE;
-    uint32_t flags = SAMPLE_ENABLE_VSYNC;
-    MyRenderContext context = {0};
-    SDL_Event e;
-
-#ifdef VALIDATION_LAYERS
-    flags |= SAMPLE_VALIDATION_LAYERS;
-#endif
-
-    printf("Starting %s ...\n", sample_name);
-
-    init_sdl2();
-
-    create_sdl2_vulkan_window(&context, flags);
-    create_sdl2_vulkan_instance(&context, flags);
-    create_sdl2_vulkan_surface(&context);
-    choose_vulkan_physical_device(&context, flags);
-    create_vulkan_logical_device(&context, flags);
-    create_vulkan_render_pass(&context);
-    create_vulkan_swapchain(&context);
-    create_vulkan_pipeline(&context);
-    create_vulkan_command_buffers(&context);
-
-    printf("Press any key to quit\n");
-
-    while (running)
-    {
-        draw_frame(&context);
-        update_frame_stats(&context);
-
-        while (SDL_PollEvent(&e))
-        {
-            if (e.type == SDL_KEYDOWN)
-            {
-                if (e.key.keysym.sym == SDLK_ESCAPE)
-                {
-                    running = VK_FALSE;
-                }
-                else if (e.key.keysym.sym == SDLK_f)
-                {
-                    resize_sdl2_vulkan_window(&context);
-                }
-            }
-        }
-    }
-
-    shutdown(&context);
-    return 0;
 }

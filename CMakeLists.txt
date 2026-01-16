@@ -30,6 +30,10 @@ set(CMAKE_CXX_FLAGS_DEBUG ${DEBUG_GCC_COMPILER_FLAGS})
 set(CMAKE_CXX_FLAGS_RELEASE ${RELEASE_GCC_COMPILER_FLAGS})
 add_definitions(-D${PLATFORM_TYPE})
 
+set(SHADERS_DIR ${CMAKE_SOURCE_DIR}/shaders)
+set(SHADERS_OUTPUT_DIR ${CMAKE_BINARY_DIR}/shaders/)
+file(MAKE_DIRECTORY "${SHADERS_OUTPUT_DIR}")
+
 find_package(Vulkan COMPONENTS glslc volk)
 find_package(SDL2 REQUIRED)
 
@@ -49,64 +53,70 @@ if (NOT Vulkan_glslangValidator_FOUND)
     message(FATAL_ERROR "Vulkan GLSL validator is not found")
 endif()
 
-add_executable(vulkan_beginner beginner.c shader_io.c /usr/include/volk.c)
+macro(add_shader shader_name)
+    set(SHADERS_SOURCES ${SHADERS_DIR}/${shader_name}.vert ${SHADERS_DIR}/${shader_name}.frag)
+    set(SHADERS_BINARIES ${CMAKE_BINARY_DIR}/shaders/${shader_name}.vert.spv ${CMAKE_BINARY_DIR}/shaders/${shader_name}.frag.spv)
+    # Compile the shaders with glslc
+    #
+    # We use a custom command to compile the shaders with glslc. The
+    # command takes the shader sources as input and generates the
+    # compiled shaders as output. The command is executed in the
+    # SHADERS_OUTPUT_DIR directory.
+    #
+    # We add a dependency between the vulkan_beginner target and the
+    # shaders_compilation custom target. This means that the
+    # vulkan_beginner target will be rebuilt whenever the shaders change.
+    add_custom_command(
+        OUTPUT ${SHADERS_BINARIES}
+        COMMAND Vulkan::glslc
+        ARGS -c ${SHADERS_SOURCES} -Werror
+        WORKING_DIRECTORY ${SHADERS_OUTPUT_DIR}
+        DEPENDS ${SHADERS_DIR} ${SHADERS_SOURCES}
+        COMMENT "Compiling ${SHADERS_SOURCES} ..."
+        VERBATIM
+    )
 
-# Include directories for the Vulkan and Vulkan validation layers
-# libraries
-# We include the Vulkan and Vulkan validation layers include directories
-# as private include directories for the vulkan_beginner target.
-# This means that the Vulkan and Vulkan validation layers include
-# directories will be added to the include path for the vulkan_beginner
-# target, but will not be added to the include path for any other
-# targets that depend on the vulkan_beginner target.
-target_include_directories(vulkan_beginner PRIVATE
-    ${Vulkan_INCLUDE_DIRS}
-    ${SDL2_INCLUDE_DIRS}
+    list(APPEND ALL_SHADERS_BINARIES ${SHADERS_BINARIES})
+endmacro()
+
+macro(add_sample sample_name)
+    add_executable(${sample_name} ${sample_name}.c common.c shader_io.c /usr/include/volk.c)
+    # Include directories for the Vulkan and Vulkan validation layers
+    # libraries
+    # We include the Vulkan and Vulkan validation layers include directories
+    # as private include directories for the vulkan_beginner target.
+    # This means that the Vulkan and Vulkan validation layers include
+    # directories will be added to the include path for the vulkan_beginner
+    # target, but will not be added to the include path for any other
+    # targets that depend on the vulkan_beginner target.
+    target_include_directories(${sample_name} PRIVATE
+        ${Vulkan_INCLUDE_DIRS}
+        ${SDL2_INCLUDE_DIRS}
+    )
+
+    # Link the vulkan_beginner target against the Vulkan and Vulkan
+    # validation layers libraries
+    #
+    # We link the vulkan_beginner target against the Vulkan and Vulkan
+    # validation layers libraries as private libraries. This means that
+    # the Vulkan and Vulkan validation layers libraries will be linked
+    # against the vulkan_beginner target, but will not be propagated to any
+    # other targets that depend on the vulkan_beginner target.
+    target_link_libraries(${sample_name} PRIVATE  
+        ${SDL2_LIBRARIES}
+    )
+
+    # Add a dependency between the executable target and the
+    # shaders_compilation custom target
+    add_dependencies(${sample_name} shaders_compilation)
+endmacro()
+
+add_shader(base)
+
+add_custom_target(shaders_compilation
+    COMMENT "Compiling shaders done"
+    DEPENDS ${ALL_SHADERS_BINARIES}
 )
 
-# Link the vulkan_beginner target against the Vulkan and Vulkan
-# validation layers libraries
-#
-# We link the vulkan_beginner target against the Vulkan and Vulkan
-# validation layers libraries as private libraries. This means that
-# the Vulkan and Vulkan validation layers libraries will be linked
-# against the vulkan_beginner target, but will not be propagated to any
-# other targets that depend on the vulkan_beginner target.
-target_link_libraries(vulkan_beginner PRIVATE  
-    ${SDL2_LIBRARIES}
-)
-
-set(SHADERS_DIR ${CMAKE_SOURCE_DIR}/shaders)
-set(SHADERS_OUTPUT_DIR ${CMAKE_BINARY_DIR}/shaders/)
-set(SHADERS_SOURCES ${SHADERS_DIR}/base.vert ${SHADERS_DIR}/base.frag)
-set(SHADERS_BINARIES ${CMAKE_BINARY_DIR}/shaders/base.vert.spv ${CMAKE_BINARY_DIR}/shaders/base.frag.spv)
-
-# Compile the shaders with glslc
-#
-# We use a custom command to compile the shaders with glslc. The
-# command takes the shader sources as input and generates the
-# compiled shaders as output. The command is executed in the
-# SHADERS_OUTPUT_DIR directory.
-#
-# We add a dependency between the vulkan_beginner target and the
-# shaders_compilation custom target. This means that the
-# vulkan_beginner target will be rebuilt whenever the shaders change.
-add_custom_command(
-    OUTPUT ${SHADERS_BINARIES}
-    COMMAND Vulkan::glslc
-    ARGS -c ${SHADERS_SOURCES} -Werror
-    WORKING_DIRECTORY ${SHADERS_OUTPUT_DIR}
-    DEPENDS ${SHADERS_DIR} ${SHADERS_SOURCES}
-    COMMENT "Compiling Shaders"
-    VERBATIM
-)
-
-# Add a custom target that depends on the compiled shaders
-#
-# This target does not generate any output and only serves as a
-# dependency for the vulkan_beginner target.
-add_custom_target(shaders_compilation DEPENDS ${SHADERS_BINARIES})
-
-# Add a dependency between the vulkan_beginner target and the
-# shaders_compilation custom target
-add_dependencies(vulkan_beginner shaders_compilation)
+add_sample(sample_minimal)
+add_sample(sample_dyn_render)
