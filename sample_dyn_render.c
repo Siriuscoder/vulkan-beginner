@@ -185,10 +185,10 @@ void record_render_commands(MyRenderContext *context, MyFrameInFlight *frameInFl
     CHECK_VK(vkEndCommandBuffer(frameInFlight->commandBuffer));
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
     int8_t running = VK_TRUE;
-    uint32_t flags = SAMPLE_ENABLE_VSYNC;
+    uint32_t flags = SAMPLE_ENABLE_VSYNC | SAMPLE_USE_DISCRETE_GPU;
     MyRenderContext context = {0};
     SDL_Event e;
 

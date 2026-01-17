@@ -1,5 +1,7 @@
 #include "common.h"
 
+#include <string.h>
+
 static const char *VK_LAYER_KHRONOS_validation_name = "VK_LAYER_KHRONOS_validation";
 
 void init_sdl2(void)
@@ -549,6 +551,8 @@ void choose_vulkan_physical_device(MyRenderContext *context, uint32_t flags)
     VkResult r;
     uint32_t deviceCount = 0;
     VkPhysicalDevice *devices = NULL;
+    VkPhysicalDeviceProperties props;
+    VkPhysicalDeviceFeatures features;
 
     CHECK_VK(vkEnumeratePhysicalDevices(context->instance, &deviceCount, NULL));
     if (deviceCount == 0)
@@ -564,8 +568,6 @@ void choose_vulkan_physical_device(MyRenderContext *context, uint32_t flags)
     {
         uint32_t queueFamilyCount = 0;
         VkQueueFamilyProperties *queueFamilies = NULL;
-        VkPhysicalDeviceProperties props;
-        VkPhysicalDeviceFeatures features;
 
         vkGetPhysicalDeviceProperties(devices[i], &props);
         vkGetPhysicalDeviceFeatures(devices[i], &features);
@@ -626,6 +628,11 @@ void choose_vulkan_physical_device(MyRenderContext *context, uint32_t flags)
         fprintf(stderr, "Failed to find situable GPU\n");
         exit(1);
     }
+
+    printf("Device vulkan version: %d.%d.%d\n",
+        VK_API_VERSION_MAJOR(props.apiVersion), 
+        VK_API_VERSION_MINOR(props.apiVersion), 
+        VK_API_VERSION_PATCH(props.apiVersion));
 
     free(devices);
 }
@@ -1067,7 +1074,8 @@ void update_frame_stats(MyRenderContext *context)
     if (currentTimerTick - context->frameStats.lastTimerTick >= context->frameStats.timerFreq)
     {
         context->frameStats.lastTimerTick = currentTimerTick;
-        printf("Total frames: %lu, FPS: %lu\n", context->frameStats.frameNumber, context->frameStats.framesPerSecond);
+        printf("Total frames: %lu, FPS: %lu\n", (unsigned long)context->frameStats.frameNumber, 
+            (unsigned long)context->frameStats.framesPerSecond);
         context->frameStats.framesPerSecond = 0;
     }
 }
