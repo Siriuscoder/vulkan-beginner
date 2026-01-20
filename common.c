@@ -92,8 +92,22 @@ static void check_vulkan_instance_extensions_support(MyRenderContext *context)
         {
             context->supportedFeatures.getSurfaceCapabilities2Support = VK_TRUE;
         }
-    }
 #endif
+
+#ifdef VK_KHR_portability_enumeration
+        if (strcmp(extensionsProps[i].extensionName, VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME) == 0)
+        {
+            context->supportedFeatures.portabilityEnumerationSupport = VK_TRUE;
+        }
+#endif
+
+#ifdef VK_KHR_portability_subset
+        if (strcmp(extensionsProps[i].extensionName, VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME) == 0)
+        {
+            context->supportedFeatures.portabilitySubsetSupport = VK_TRUE;
+        }
+#endif
+    }
 
     free(extensionsProps);
 }
@@ -239,6 +253,21 @@ static void create_vulkan_instance(MyRenderContext *context, const VkApplication
     {
         extensions[extensionsCount++] = VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME;
     }
+
+#ifdef VK_KHR_portability_enumeration
+    if (context->supportedFeatures.portabilityEnumerationSupport)
+    {
+        extensions[extensionsCount++] = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
+        instInfo.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+    }
+#endif
+
+#ifdef VK_KHR_portability_subset
+    if (context->supportedFeatures.portabilitySubsetSupport)
+    {
+        extensions[extensionsCount++] = VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME;
+    }
+#endif
 
     printf("Activating the following extensions:\n");
     print_extensions(extensions, extensionsCount);
@@ -551,8 +580,25 @@ void choose_vulkan_physical_device(MyRenderContext *context, uint32_t flags)
     VkResult r;
     uint32_t deviceCount = 0;
     VkPhysicalDevice *devices = NULL;
-    VkPhysicalDeviceProperties props;
-    VkPhysicalDeviceFeatures features;
+    VkPhysicalDeviceProperties2 props = {0};
+    VkPhysicalDeviceFeatures2 features = {0};
+
+#ifdef VK_KHR_portability_subset
+    VkPhysicalDevicePortabilitySubsetFeaturesKHR portabilityFeatures = {0};
+    VkPhysicalDevicePortabilitySubsetPropertiesKHR portabilityProperties = {0};
+
+    if (context->supportedFeatures.portabilitySubsetSupport)
+    {
+        portabilityFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PORTABILITY_SUBSET_FEATURES_KHR;
+        features.pNext = &portabilityFeatures;
+
+        portabilityProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PORTABILITY_SUBSET_PROPERTIES_KHR;
+        props.pNext = &portabilityProperties;
+    }
+#endif
+
+    props.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+    features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
 
     CHECK_VK(vkEnumeratePhysicalDevices(context->instance, &deviceCount, NULL));
     if (deviceCount == 0)
@@ -569,11 +615,11 @@ void choose_vulkan_physical_device(MyRenderContext *context, uint32_t flags)
         uint32_t queueFamilyCount = 0;
         VkQueueFamilyProperties *queueFamilies = NULL;
 
-        vkGetPhysicalDeviceProperties(devices[i], &props);
-        vkGetPhysicalDeviceFeatures(devices[i], &features);
+        vkGetPhysicalDeviceProperties2(devices[i], &props);
+        vkGetPhysicalDeviceFeatures2(devices[i], &features);
 
         // Vulkan 1.3 is required
-        if (props.apiVersion < VK_API_VERSION_1_3)
+        if (props.properties.apiVersion < VK_API_VERSION_1_3)
         {
             continue;
         }
@@ -602,37 +648,37 @@ void choose_vulkan_physical_device(MyRenderContext *context, uint32_t flags)
         }
 
         context->queueFamilyCount = queueFamilyCount;
-        context->supportedFeatures.features = features;
-        context->supportedFeatures.limits = props.limits;
+        context->supportedFeatures.features = features.features;
+        context->supportedFeatures.limits = props.properties.limits;
 
         if (flags & SAMPLE_USE_DISCRETE_GPU)
         {
             // Check if discrete GPU
-            if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
+            if (props.properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
             {
                 context->physicalDevice = devices[i];
-                printf("Selected discrete GPU: %s\n", props.deviceName);
+                printf("Selected discrete GPU: %s\n", props.properties.deviceName);
                 break;
             }
         }
         else
         {
             context->physicalDevice = devices[i];
-            printf("Selected first suitable GPU: %s\n", props.deviceName);
+            printf("Selected first suitable GPU: %s\n", props.properties.deviceName);
             break;
         }
     }
 
     if (context->physicalDevice == VK_NULL_HANDLE)
     {
-        fprintf(stderr, "Failed to find situable GPU\n");
+        fprintf(stderr, "Failed to find suitable GPU\n");
         exit(1);
     }
 
     printf("Device vulkan version: %d.%d.%d\n",
-        VK_API_VERSION_MAJOR(props.apiVersion), 
-        VK_API_VERSION_MINOR(props.apiVersion), 
-        VK_API_VERSION_PATCH(props.apiVersion));
+        VK_API_VERSION_MAJOR(props.properties.apiVersion), 
+        VK_API_VERSION_MINOR(props.properties.apiVersion), 
+        VK_API_VERSION_PATCH(props.properties.apiVersion));
 
     free(devices);
 }

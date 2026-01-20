@@ -37,6 +37,8 @@ typedef struct MyDeviceFeatures
     uint8_t debugUtilsSupport;
     uint8_t validationFeaturesSupport;
     uint8_t swapchainMaintenance1Support;
+    uint8_t portabilityEnumerationSupport;
+    uint8_t portabilitySubsetSupport;
 } MyDeviceFeatures;
 
 typedef struct MyQueueInfo

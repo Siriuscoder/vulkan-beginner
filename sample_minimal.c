@@ -217,7 +217,7 @@ int main(int argc, char **argv)
     create_vulkan_pipeline(&context);
     create_vulkan_command_buffers(&context);
 
-    printf("Press any key to quit\n");
+    printf("Press escape to quit\n");
 
     while (running)
     {

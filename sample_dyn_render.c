@@ -188,7 +188,7 @@ void record_render_commands(MyRenderContext *context, MyFrameInFlight *frameInFl
 int main(int argc, char **argv)
 {
     int8_t running = VK_TRUE;
-    uint32_t flags = SAMPLE_ENABLE_VSYNC | SAMPLE_USE_DISCRETE_GPU;
+    uint32_t flags = SAMPLE_ENABLE_VSYNC;
     MyRenderContext context = {0};
     SDL_Event e;
 
@@ -210,7 +210,7 @@ int main(int argc, char **argv)
     create_vulkan_pipeline(&context);
     create_vulkan_command_buffers(&context);
 
-    printf("Press any key to quit\n");
+    printf("Press escape to quit\n");
 
     while (running)
     {
