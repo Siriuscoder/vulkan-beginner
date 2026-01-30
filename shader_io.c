@@ -1,42 +1,41 @@
 #include "shader_io.h"
 
 #include <stdio.h>
-#include <errno.h>
-#include <string.h>
 
 int read_file_to_memory(const char* path, void *buffer, size_t* size)
 {
-    FILE* file = fopen(path, "rb");
-    if (!file)
+    SDL_RWops *handle;
+    
+    if ((handle = SDL_RWFromFile(path, "rb")) == NULL)
     {
-        fprintf(stderr, "Failed to open file %s: %s\n", path, strerror(errno));
-        return 0;
+        fprintf(stderr, "Failed to open file %s: %s\n", path, SDL_GetError());
+        return VK_FALSE;
     }
 
     if (!buffer)
     {
-        if (fseek(file, 0, SEEK_END) != 0)
+        int64_t s = SDL_RWsize(handle);
+        if (s < 0)
         {
-            fprintf(stderr, "Failed to get file size: %s\n", strerror(errno));
+            fprintf(stderr, "Failed to get file size of %s: %s\n", path, SDL_GetError());
+            SDL_RWclose(handle);
+            return VK_FALSE;
         }
 
-        *size = ftell(file);
-        fseek(file, 0, SEEK_SET);
-        return 1;
-    } 
+        *size = s;
+        SDL_RWclose(handle);
+        return VK_TRUE;
+    }
 
-    if (fread(buffer, 1, *size, file) != *size)
+
+    if (SDL_RWread(handle, buffer, *size, 1) != 1)
     {
-        if (feof(file))
-            fprintf(stderr, "Failed to read %s: unexpected end of file\n", path);
-        else if (ferror(file))
-            fprintf(stderr, "Failed to read %s: %s", path, strerror(errno));
-
-        fclose(file);
+        fprintf(stderr, "Failed to read file %s: %s", path, SDL_GetError());
+        SDL_RWclose(handle);
         return 0;
     }
 
-    fclose(file);
+    SDL_RWclose(handle);
     return 1;
 }
 
