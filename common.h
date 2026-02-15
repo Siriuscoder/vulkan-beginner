@@ -27,6 +27,14 @@
 
 #define MAX_FRAMES_IN_FLIGHT        2
 
+#pragma pack(push, 4)
+typedef struct MyShaderUniforms
+{
+    float time;
+    float aspect;
+} MyShaderUniforms;
+#pragma pack(pop)
+
 typedef struct MyDeviceFeatures
 {
     VkPhysicalDeviceFeatures features;
@@ -106,6 +114,7 @@ typedef struct MyRenderContext
     MyFrameStats frameStats;
     MyFrameInFlight framesInFlight[MAX_FRAMES_IN_FLIGHT];
     uint8_t isFullscreen;
+    MyShaderUniforms shaderUniforms;
 } MyRenderContext;
 
 void record_render_commands(MyRenderContext *context, MyFrameInFlight *frameInFlight);

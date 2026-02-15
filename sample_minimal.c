@@ -62,6 +62,7 @@ void create_vulkan_pipeline(MyRenderContext *context)
     VkPipelineDynamicStateCreateInfo dynamicStateInfo = {0};
     VkPipelineLayoutCreateInfo pipelineLayoutInfo = {0};
     VkGraphicsPipelineCreateInfo pipelineInfo = {0};
+    VkPushConstantRange pushConstantRange = {0};
 
     shaderStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     shaderStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
@@ -90,8 +91,8 @@ void create_vulkan_pipeline(MyRenderContext *context)
     rasterizerInfo.rasterizerDiscardEnable = VK_FALSE;
     rasterizerInfo.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizerInfo.lineWidth = 1.0f;
-    rasterizerInfo.cullMode = VK_CULL_MODE_NONE;
-    rasterizerInfo.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    rasterizerInfo.cullMode = VK_CULL_MODE_BACK_BIT;
+    rasterizerInfo.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     rasterizerInfo.depthBiasEnable = VK_FALSE;
 
     multisamplingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
@@ -115,9 +116,14 @@ void create_vulkan_pipeline(MyRenderContext *context)
     dynamicStateInfo.dynamicStateCount = sizeof(dynamicStates) / sizeof(VkDynamicState);
     dynamicStateInfo.pDynamicStates = dynamicStates;
 
+    pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    pushConstantRange.size = sizeof(MyShaderUniforms);
+    pushConstantRange.offset = 0;
+
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutInfo.setLayoutCount = 0;
-    pipelineLayoutInfo.pushConstantRangeCount = 0;
+    pipelineLayoutInfo.pushConstantRangeCount = 1;
+    pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
 
     CHECK_VK(vkCreatePipelineLayout(context->logicalDevice, &pipelineLayoutInfo, NULL, &context->graphicsPipelineLayout));
 
@@ -183,8 +189,11 @@ void record_render_commands(MyRenderContext *context, MyFrameInFlight *frameInFl
     vkCmdSetScissor(frameInFlight->commandBuffer, 0, 1, &scissor);
     // bind pipeline, bind shaders 
     vkCmdBindPipeline(frameInFlight->commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, context->graphicsPipeline);
+    // setup uniforms
+    vkCmdPushConstants(frameInFlight->commandBuffer, context->graphicsPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, 
+        sizeof(MyShaderUniforms), &context->shaderUniforms);
     // draw batch 
-    vkCmdDraw(frameInFlight->commandBuffer, 3, 1, 0, 0);
+    vkCmdDraw(frameInFlight->commandBuffer, 18, 1, 0, 0);
     // end render pass
     vkCmdEndRenderPass(frameInFlight->commandBuffer);
     // end recording render commands

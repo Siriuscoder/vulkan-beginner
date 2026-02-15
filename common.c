@@ -688,7 +688,7 @@ void  create_vulkan_logical_device(MyRenderContext *context, uint32_t flags)
     VkResult r;
     VkDeviceQueueCreateInfo queueInfo[3] = {0};
     VkDeviceCreateInfo deviceInfo = {0};
-    //VkPhysicalDeviceFeatures deviceFeatures = {0};
+    VkPhysicalDeviceFeatures enabledFeatures = {0};
     float defaultQueuePriority = 1.0f;
     uint32_t uniqueQueueFamilyCount = 0;
     const char *enabledExtensions[4] = {0};
@@ -714,13 +714,25 @@ void  create_vulkan_logical_device(MyRenderContext *context, uint32_t flags)
             uniqueQueueFamilyCount++;
         }
     }
+
+#ifdef VALIDATION_LAYERS
+    if (context->supportedFeatures.features.robustBufferAccess)
+    {
+        enabledFeatures.robustBufferAccess = VK_TRUE;
+    }
+#endif
+
+    if (context->supportedFeatures.features.fillModeNonSolid)
+    {
+        enabledFeatures.fillModeNonSolid = VK_TRUE;
+    }
     
     // Create logical device
     deviceInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     deviceInfo.queueCreateInfoCount = uniqueQueueFamilyCount;
     deviceInfo.pQueueCreateInfos = queueInfo;
     // VkPhysicalDeviceFeatures and other nested structs may be setup via pNext chain of the VkDeviceCreateInfo
-    //deviceInfo.pEnabledFeatures = &deviceFeatures;
+    deviceInfo.pEnabledFeatures = &enabledFeatures;
     if (flags & SAMPLE_VALIDATION_LAYERS && context->supportedFeatures.validationLayerSupport)
     {
         deviceInfo.enabledLayerCount = 1;
@@ -927,6 +939,7 @@ void create_vulkan_swapchain(MyRenderContext *context)
         CHECK_VK(vkCreateFence(context->logicalDevice, &fenceInfo, NULL, &context->swapchainInfo.framebuffers[i].presentationCompletedFence));
     }
 
+    context->shaderUniforms.aspect = (float)context->swapchainInfo.extent.width / (float)context->swapchainInfo.extent.height;
     // Destroy old swapchain, if exists
     if (oldSwapchain != VK_NULL_HANDLE)
     {
@@ -1070,7 +1083,6 @@ void draw_frame(MyRenderContext *context)
     // Record render commands
     record_render_commands(context, currentFrameInFlight);
 
-
     waitSemaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
     waitSemaphoreInfo.semaphore = currentFrameInFlight->imageAvailableSemaphore;
     waitSemaphoreInfo.stageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT; // Do not execute any submited commands until the swapchain image will be available
@@ -1111,6 +1123,8 @@ void update_frame_stats(MyRenderContext *context)
         context->frameStats.timerFreq = SDL_GetPerformanceFrequency();
         context->frameStats.lastTimerTick = currentTimerTick;
     }
+
+    context->shaderUniforms.time = (float)currentTimerTick / (float)context->frameStats.timerFreq;
 
     context->frameStats.frameNumber++;
     context->frameStats.framesPerSecond++;
