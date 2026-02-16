@@ -114,7 +114,7 @@ void record_render_commands(MyRenderContext *context, MyFrameInFlight *frameInFl
     VkImageMemoryBarrier2 imageLayoutBarrier = {0};
     VkDependencyInfo dependencyInfo = {0};
     VkCommandBufferBeginInfo bufferBeginInfo = {0};
-    VkClearValue clearColor = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
+    VkClearValue clearColor = {{{0.03f, 0.03f, 0.03f, 1.0f}}};
     VkViewport viewport = {0};
     VkRect2D scissor = {0};
 

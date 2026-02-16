@@ -1,7 +1,6 @@
 #version 450
 
-layout(location = 0) out vec3 vWPos;
-layout(location = 1) out vec3 vWNormal;
+layout(location = 0) out vec3 vWNormal;
 layout(push_constant) uniform Params
 {
     float time;
@@ -47,7 +46,7 @@ mat4 perspectiveRH_ZO(float fovy, float aspect, float zNear, float zFar)
     // column-major mat4(vec4 col0, col1, col2, col3)
     return mat4(
         vec4(f / aspect, 0.0, 0.0,                              0.0),
-        vec4(0.0,         -f, 0.0,                              0.0),              // -f: flip Y (Vulkan)
+        vec4(0.0,         -f, 0.0,                              0.0),              // -f: flip Y (Vulkan specific)
         vec4(0.0,        0.0, zFar / (zNear - zFar),           -1.0),
         vec4(0.0,        0.0, (zNear * zFar) / (zNear - zFar),  0.0)
     );
@@ -120,9 +119,6 @@ void main()
     mat4 view = lookAtRH(vec3(1.0, 1.0, 2.5), vec3(0.0, 0.0, 0.0));
     mat4 projection = perspectiveRH_ZO(radians(60.0), params.aspect, 0.1, 100.0);
 
-    vec4 wPosUndev = model * vec4(pos, 1.0);
-    
-    gl_Position = projection * view * wPosUndev;
+    gl_Position = projection * view * model * vec4(pos, 1.0);
     vWNormal = mat3(model) * normal;
-    vWPos = wPosUndev.xyz / wPosUndev.w;
 }

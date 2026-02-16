@@ -1,7 +1,6 @@
 #version 450
 
-layout(location = 0) in vec3 vWPos;
-layout(location = 1) in vec3 vWNormal;
+layout(location = 0) in vec3 vWNormal;
 layout(location = 0) out vec4 outColor;
 
 const vec3 lightDir = vec3(2.0, -3.0, 5.0);
