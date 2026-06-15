@@ -77,6 +77,7 @@ typedef struct MyFrameStats
 {
     uint64_t timerFreq;
     uint64_t lastTimerTick;
+    uint64_t startTimerTick;
     uint64_t framesPerSecond;
     uint64_t frameNumber;
     uint32_t frameInFlightIndex;
@@ -126,7 +127,7 @@ void create_sdl2_vulkan_window(MyRenderContext *context, uint32_t flags);
 void create_sdl2_vulkan_instance(MyRenderContext *context, uint32_t flags);
 void create_sdl2_vulkan_surface(MyRenderContext *context);
 void choose_vulkan_physical_device(MyRenderContext *context, uint32_t flags);
-void create_vulkan_logical_device(MyRenderContext *context, uint32_t flags);
+void create_vulkan_logical_device(MyRenderContext *context);
 void create_vulkan_swapchain(MyRenderContext *context);
 void create_vulkan_command_buffers(MyRenderContext *context);
 void draw_frame(MyRenderContext *context);

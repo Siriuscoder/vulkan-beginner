@@ -683,7 +683,7 @@ void choose_vulkan_physical_device(MyRenderContext *context, uint32_t flags)
     free(devices);
 }
 
-void  create_vulkan_logical_device(MyRenderContext *context, uint32_t flags)
+void  create_vulkan_logical_device(MyRenderContext *context)
 {
     VkResult r;
     VkDeviceQueueCreateInfo queueInfo[3] = {0};
@@ -733,12 +733,6 @@ void  create_vulkan_logical_device(MyRenderContext *context, uint32_t flags)
     deviceInfo.pQueueCreateInfos = queueInfo;
     // VkPhysicalDeviceFeatures and other nested structs may be setup via pNext chain of the VkDeviceCreateInfo
     deviceInfo.pEnabledFeatures = &enabledFeatures;
-    if (flags & SAMPLE_VALIDATION_LAYERS && context->supportedFeatures.validationLayerSupport)
-    {
-        deviceInfo.enabledLayerCount = 1;
-        deviceInfo.ppEnabledLayerNames = &VK_LAYER_KHRONOS_validation_name;
-    }
-
     deviceInfo.ppEnabledExtensionNames = enabledExtensions;
     enabledExtensions[deviceInfo.enabledExtensionCount++] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
 
@@ -1121,10 +1115,11 @@ void update_frame_stats(MyRenderContext *context)
     if (context->frameStats.timerFreq == 0)
     {
         context->frameStats.timerFreq = SDL_GetPerformanceFrequency();
-        context->frameStats.lastTimerTick = currentTimerTick;
+        context->frameStats.lastTimerTick = context->frameStats.startTimerTick = currentTimerTick;
     }
 
-    context->shaderUniforms.time = (float)currentTimerTick / (float)context->frameStats.timerFreq;
+    context->shaderUniforms.time = (float)(currentTimerTick - context->frameStats.startTimerTick) / 
+        (float)context->frameStats.timerFreq;
 
     context->frameStats.frameNumber++;
     context->frameStats.framesPerSecond++;

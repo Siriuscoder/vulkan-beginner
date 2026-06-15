@@ -214,7 +214,7 @@ int main(int argc, char **argv)
     create_sdl2_vulkan_instance(&context, flags);
     create_sdl2_vulkan_surface(&context);
     choose_vulkan_physical_device(&context, flags);
-    create_vulkan_logical_device(&context, flags);
+    create_vulkan_logical_device(&context);
     create_vulkan_swapchain(&context);
     create_vulkan_pipeline(&context);
     create_vulkan_command_buffers(&context);
