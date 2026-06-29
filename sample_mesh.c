@@ -1,11 +1,30 @@
 #include "common.h"
+#include "vbuffer.h"
 
-static const char *sample_name = "Dynamic render vulkan sample";
+static const char *sample_name = "Dynamic render with vertex and index buffers";
+
+typedef struct Vertex
+{
+    float pos[3];
+} Vertex;
+
+
+void setup_vertex_description(VkVertexInputBindingDescription *bindingDesc, VkVertexInputAttributeDescription *attributeDesc)
+{
+    bindingDesc->binding = 0;
+    bindingDesc->stride = sizeof(Vertex);
+    bindingDesc->inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+    attributeDesc->binding = 0;
+    attributeDesc->location = 0;
+    attributeDesc->format = VK_FORMAT_R32G32B32_SFLOAT;
+    attributeDesc->offset = offsetof(Vertex, pos);
+}
 
 void create_vulkan_pipeline(MyRenderContext *context)
 {
     VkResult r;
-    VkPipelineShaderStageCreateInfo shaderStages[2] = {0};
+    VkPipelineShaderStageCreateInfo shaderStages[3] = {0};
     VkPipelineVertexInputStateCreateInfo vertexInputInfo = {0};
     VkPipelineInputAssemblyStateCreateInfo inputAssemblyInfo = {0};
     VkPipelineViewportStateCreateInfo viewportStateInfo = {0};
@@ -19,20 +38,30 @@ void create_vulkan_pipeline(MyRenderContext *context)
     VkGraphicsPipelineCreateInfo pipelineInfo = {0};
     VkPipelineRenderingCreateInfo pipelineRenderingCreateInfo = {0};
     VkPushConstantRange pushConstantRange = {0};
+    VkVertexInputBindingDescription bindingDesc = {0};
+    VkVertexInputAttributeDescription attributeDesc = {0};
 
     shaderStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     shaderStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-    shaderStages[0].module = load_vulkan_shader_module(context->logicalDevice, "shaders/base.vert.spv");
+    shaderStages[0].module = load_vulkan_shader_module(context->logicalDevice, "shaders/mesh.vert.spv");
     shaderStages[0].pName = "main"; // Entry point name
 
     shaderStages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    shaderStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    shaderStages[1].module = load_vulkan_shader_module(context->logicalDevice, "shaders/base.frag.spv");
+    shaderStages[1].stage = VK_SHADER_STAGE_GEOMETRY_BIT;
+    shaderStages[1].module = load_vulkan_shader_module(context->logicalDevice, "shaders/mesh.geom.spv");
     shaderStages[1].pName = "main"; // Entry point name
 
+    shaderStages[2].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStages[2].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    shaderStages[2].module = load_vulkan_shader_module(context->logicalDevice, "shaders/mesh.frag.spv");
+    shaderStages[2].pName = "main"; // Entry point name
+
+    setup_vertex_description(&bindingDesc, &attributeDesc);
     vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertexInputInfo.vertexBindingDescriptionCount = 0;
-    vertexInputInfo.vertexAttributeDescriptionCount = 0;
+    vertexInputInfo.vertexBindingDescriptionCount = 1;
+    vertexInputInfo.pVertexBindingDescriptions = &bindingDesc;
+    vertexInputInfo.vertexAttributeDescriptionCount = 1;
+    vertexInputInfo.pVertexAttributeDescriptions = &attributeDesc;
 
     inputAssemblyInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
     inputAssemblyInfo.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -72,7 +101,7 @@ void create_vulkan_pipeline(MyRenderContext *context)
     dynamicStateInfo.dynamicStateCount = sizeof(dynamicStates) / sizeof(VkDynamicState);
     dynamicStateInfo.pDynamicStates = dynamicStates;
 
-    pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_GEOMETRY_BIT;
     pushConstantRange.size = sizeof(MyShaderUniforms);
     pushConstantRange.offset = 0;
 
@@ -89,7 +118,7 @@ void create_vulkan_pipeline(MyRenderContext *context)
 
     pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
     pipelineInfo.pNext = &pipelineRenderingCreateInfo;
-    pipelineInfo.stageCount = 2;
+    pipelineInfo.stageCount = sizeof(shaderStages) / sizeof(VkPipelineShaderStageCreateInfo);
     pipelineInfo.pStages = shaderStages;
     pipelineInfo.pVertexInputState = &vertexInputInfo;
     pipelineInfo.pInputAssemblyState = &inputAssemblyInfo;
@@ -104,6 +133,7 @@ void create_vulkan_pipeline(MyRenderContext *context)
 
     vkDestroyShaderModule(context->logicalDevice, shaderStages[0].module, NULL);
     vkDestroyShaderModule(context->logicalDevice, shaderStages[1].module, NULL);
+    vkDestroyShaderModule(context->logicalDevice, shaderStages[2].module, NULL);
 }
 
 void record_render_commands(MyRenderContext *context, MyFrameInFlight *frameInFlight)
@@ -117,6 +147,7 @@ void record_render_commands(MyRenderContext *context, MyFrameInFlight *frameInFl
     VkClearValue clearColor = {{{0.03f, 0.03f, 0.03f, 1.0f}}};
     VkViewport viewport = {0};
     VkRect2D scissor = {0};
+    VkDeviceSize offsets[] = {0};
 
     // Describe render attachment
     renderingAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
@@ -175,10 +206,14 @@ void record_render_commands(MyRenderContext *context, MyFrameInFlight *frameInFl
     // bind pipeline, bind shaders 
     vkCmdBindPipeline(frameInFlight->commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, context->graphicsPipeline);
     // setup uniforms
-    vkCmdPushConstants(frameInFlight->commandBuffer, context->graphicsPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, 
-        sizeof(MyShaderUniforms), &context->shaderUniforms);
+    vkCmdPushConstants(frameInFlight->commandBuffer, context->graphicsPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | 
+        VK_SHADER_STAGE_GEOMETRY_BIT, 0, sizeof(MyShaderUniforms), &context->shaderUniforms);
+    // bind vertex buffer
+    vkCmdBindVertexBuffers(frameInFlight->commandBuffer, 0, 1, &context->vertexBuffer.buffer, offsets);
+    // bind index buffer
+    vkCmdBindIndexBuffer(frameInFlight->commandBuffer, context->indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
     // draw batch 
-    vkCmdDraw(frameInFlight->commandBuffer, 18, 1, 0, 0);
+    vkCmdDrawIndexed(frameInFlight->commandBuffer, 18, 1, 0, 0, 0);
     // end render pass
     vkCmdEndRendering(frameInFlight->commandBuffer);
 
@@ -194,8 +229,37 @@ void record_render_commands(MyRenderContext *context, MyFrameInFlight *frameInFl
     CHECK_VK(vkEndCommandBuffer(frameInFlight->commandBuffer));
 }
 
+void load_mesh(MyRenderContext *context)
+{
+    // 5 вершин: 4 основания + вершина
+    const Vertex pyramidVertices[5] = {
+        {{ -1.0, -1.0, 0.0 }},
+        {{  1.0, -1.0, 0.0 }},
+        {{  1.0,  1.0, 0.0 }},
+        {{ -1.0,  1.0, 0.0 }},
+        {{  0.0,  0.0, 1.5 }} // вершина вверх по Z
+    };
+
+    // 6 треугольников (18 вершин) CCW
+    const int32_t pyramidIndices[18] = {
+        // Основание
+        0,1,2,
+        0,2,3,
+        1,0,4,
+        2,1,4,
+        3,2,4,
+        0,3,4
+    };
+
+    context->vertexBuffer = create_and_upload_vulkan_vbo(context, pyramidVertices, sizeof(pyramidVertices));
+    context->indexBuffer = create_and_upload_vulkan_ibo(context, pyramidIndices, sizeof(pyramidIndices));
+}
+
 void destroy_auxiliary(MyRenderContext *context)
-{}
+{
+    destroy_vulkan_buffer(context, context->vertexBuffer);
+    destroy_vulkan_buffer(context, context->indexBuffer);
+}
 
 int main(int argc, char **argv)
 {
@@ -221,6 +285,7 @@ int main(int argc, char **argv)
     create_vulkan_swapchain(&context);
     create_vulkan_pipeline(&context);
     create_vulkan_command_buffers(&context);
+    load_mesh(&context);
 
     printf("Press escape to quit\n");
 

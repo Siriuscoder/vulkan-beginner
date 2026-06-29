@@ -35,10 +35,18 @@ typedef struct MyShaderUniforms
 } MyShaderUniforms;
 #pragma pack(pop)
 
+typedef struct VBuffer
+{
+    VkBuffer buffer;
+    VkDeviceMemory memory;
+    VkDeviceSize size;
+} VBuffer;
+
 typedef struct MyDeviceFeatures
 {
     VkPhysicalDeviceFeatures features;
     VkPhysicalDeviceLimits limits;
+    VkPhysicalDeviceMemoryProperties memoryProperties;
     uint8_t surfaceMaintenance1Support;
     uint8_t getSurfaceCapabilities2Support;
     uint8_t validationLayerSupport;
@@ -112,10 +120,13 @@ typedef struct MyRenderContext
     VkPipelineLayout graphicsPipelineLayout;
     VkPipeline graphicsPipeline;
     VkCommandPool commandPool;
+    VkCommandPool transferCommandPool;
     MyFrameStats frameStats;
     MyFrameInFlight framesInFlight[MAX_FRAMES_IN_FLIGHT];
     uint8_t isFullscreen;
     MyShaderUniforms shaderUniforms;
+    VBuffer vertexBuffer;
+    VBuffer indexBuffer;
 } MyRenderContext;
 
 void record_render_commands(MyRenderContext *context, MyFrameInFlight *frameInFlight);
@@ -134,3 +145,5 @@ void draw_frame(MyRenderContext *context);
 void update_frame_stats(MyRenderContext *context);
 void resize_sdl2_vulkan_window(MyRenderContext *context);
 void destroy_context(MyRenderContext *context);
+void destroy_auxiliary(MyRenderContext *context);
+uint32_t get_vulkan_memory_type_index(const MyRenderContext *context, uint32_t typeFilter, VkMemoryPropertyFlags properties);

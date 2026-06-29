@@ -148,6 +148,9 @@ void create_vulkan_pipeline(MyRenderContext *context)
     vkDestroyShaderModule(context->logicalDevice, shaderStages[1].module, NULL);
 }
 
+void destroy_auxiliary(MyRenderContext *context)
+{}
+
 void record_render_commands(MyRenderContext *context, MyFrameInFlight *frameInFlight)
 {
     VkResult r;

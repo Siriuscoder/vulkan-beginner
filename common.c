@@ -647,6 +647,11 @@ void choose_vulkan_physical_device(MyRenderContext *context, uint32_t flags)
             continue;
         }
 
+        if (!features.features.geometryShader)
+        {
+            continue;
+        }
+
         context->queueFamilyCount = queueFamilyCount;
         context->supportedFeatures.features = features.features;
         context->supportedFeatures.limits = props.properties.limits;
@@ -675,6 +680,7 @@ void choose_vulkan_physical_device(MyRenderContext *context, uint32_t flags)
         exit(1);
     }
 
+    vkGetPhysicalDeviceMemoryProperties(context->physicalDevice, &context->supportedFeatures.memoryProperties);
     printf("Device vulkan version: %d.%d.%d\n",
         VK_API_VERSION_MAJOR(props.properties.apiVersion), 
         VK_API_VERSION_MINOR(props.properties.apiVersion), 
@@ -726,6 +732,8 @@ void  create_vulkan_logical_device(MyRenderContext *context)
     {
         enabledFeatures.fillModeNonSolid = VK_TRUE;
     }
+    
+    enabledFeatures.geometryShader = VK_TRUE;
     
     // Create logical device
     deviceInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -958,6 +966,9 @@ void create_vulkan_command_buffers(MyRenderContext *context)
 
     CHECK_VK(vkCreateCommandPool(context->logicalDevice, &commandPoolInfo, NULL, &context->commandPool));
 
+    commandPoolInfo.queueFamilyIndex = context->transferQueue.familyIndex;
+    CHECK_VK(vkCreateCommandPool(context->logicalDevice, &commandPoolInfo, NULL, &context->transferCommandPool));
+
     commandBufferInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     commandBufferInfo.commandPool = context->commandPool; // one shared command pool for all frames in flight
     commandBufferInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
@@ -1015,8 +1026,10 @@ void destroy_context(MyRenderContext *context)
     }
 
     destroy_vulkan_swapchain_framebuffers(context);
+    destroy_auxiliary(context);
 
     vkDestroyCommandPool(context->logicalDevice, context->commandPool, NULL);
+    vkDestroyCommandPool(context->logicalDevice, context->transferCommandPool, NULL);
     vkDestroyPipeline(context->logicalDevice, context->graphicsPipeline, NULL);
     vkDestroyPipelineLayout(context->logicalDevice, context->graphicsPipelineLayout, NULL);
     vkDestroyRenderPass(context->logicalDevice, context->renderPass, NULL);
@@ -1031,6 +1044,7 @@ void destroy_context(MyRenderContext *context)
 
     vkDestroyInstance(context->instance, NULL);
     SDL_DestroyWindow(context->window);
+    SDL_QuitSubSystem(SDL_INIT_VIDEO | SDL_INIT_EVENTS);
     SDL_Quit();
 }
 
@@ -1079,10 +1093,10 @@ void draw_frame(MyRenderContext *context)
 
     waitSemaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
     waitSemaphoreInfo.semaphore = currentFrameInFlight->imageAvailableSemaphore;
-    waitSemaphoreInfo.stageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT; // Do not execute any submited commands until the swapchain image will be available
+    waitSemaphoreInfo.stageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT; // Do not execute any submited commands until the swapchain image becomes available
     signalSemaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
     signalSemaphoreInfo.semaphore = context->swapchainInfo.framebuffers[currentFrameInFlight->imageIndex].presentationSemaphore;
-    signalSemaphoreInfo.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT; // Signal after all submited commands have been processed
+    signalSemaphoreInfo.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT; // Signal then all submited commands have been processed
 
     commandBufferInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
     commandBufferInfo.commandBuffer = currentFrameInFlight->commandBuffer;
@@ -1153,4 +1167,20 @@ void resize_sdl2_vulkan_window(MyRenderContext *context)
 
     create_vulkan_swapchain(context);
     SDL_ShowWindow(context->window);
+}
+
+uint32_t get_vulkan_memory_type_index(const MyRenderContext *context, uint32_t typeFilter, VkMemoryPropertyFlags properties) 
+{
+    for (uint32_t i = 0; i < context->supportedFeatures.memoryProperties.memoryTypeCount; i++) 
+    {
+        if ((typeFilter & (1 << i)) && (context->supportedFeatures.memoryProperties.memoryTypes[i].propertyFlags & properties) == properties) 
+        {
+            return i;
+        }
+    }
+
+    fprintf(stderr, "Failed to find suitable GPU\n");
+    exit(1);
+
+    return 0;
 }

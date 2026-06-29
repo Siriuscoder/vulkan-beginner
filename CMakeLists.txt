@@ -91,8 +91,34 @@ macro(add_shader shader_name)
     list(APPEND ALL_SHADERS_BINARIES ${SHADERS_BINARIES})
 endmacro()
 
+macro(add_shader_geom shader_name)
+    set(SHADERS_SOURCES ${SHADERS_DIR}/${shader_name}.vert ${SHADERS_DIR}/${shader_name}.geom ${SHADERS_DIR}/${shader_name}.frag)
+    set(SHADERS_BINARIES ${CMAKE_BINARY_DIR}/shaders/${shader_name}.vert.spv ${CMAKE_BINARY_DIR}/shaders/${shader_name}.geom.spv ${CMAKE_BINARY_DIR}/shaders/${shader_name}.frag.spv)
+    # Compile the shaders with glslc
+    #
+    # We use a custom command to compile the shaders with glslc. The
+    # command takes the shader sources as input and generates the
+    # compiled shaders as output. The command is executed in the
+    # SHADERS_OUTPUT_DIR directory.
+    #
+    # We add a dependency between the vulkan_beginner target and the
+    # shaders_compilation custom target. This means that the
+    # vulkan_beginner target will be rebuilt whenever the shaders change.
+    add_custom_command(
+        OUTPUT ${SHADERS_BINARIES}
+        COMMAND Vulkan::glslc
+        ARGS -c ${SHADERS_SOURCES} -Werror
+        WORKING_DIRECTORY ${SHADERS_OUTPUT_DIR}
+        DEPENDS ${SHADERS_DIR} ${SHADERS_SOURCES}
+        COMMENT "Compiling ${SHADERS_SOURCES} ..."
+        VERBATIM
+    )
+
+    list(APPEND ALL_SHADERS_BINARIES ${SHADERS_BINARIES})
+endmacro()
+
 macro(add_sample sample_name)
-    add_executable(${sample_name} ${sample_name}.c common.c shader_io.c volk/volk.c)
+    add_executable(${sample_name} ${sample_name}.c common.c vbuffer.c shader_io.c volk/volk.c)
     # Include directories for the Vulkan and Vulkan validation layers
     # libraries
     # We include the Vulkan and Vulkan validation layers include directories
@@ -124,6 +150,7 @@ macro(add_sample sample_name)
 endmacro()
 
 add_shader(base)
+add_shader_geom(mesh)
 
 add_custom_target(shaders_compilation
     COMMENT "Compiling shaders done"
@@ -132,3 +159,4 @@ add_custom_target(shaders_compilation
 
 add_sample(sample_minimal)
 add_sample(sample_dyn_render)
+add_sample(sample_mesh)
