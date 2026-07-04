@@ -1,5 +1,7 @@
 #include "vbuffer.h"
 
+#include <string.h>
+
 VBuffer create_vulkan_buffer(const MyRenderContext *context, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties) 
 {
     VkResult r;

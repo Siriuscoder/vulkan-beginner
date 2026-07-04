@@ -695,7 +695,7 @@ void  create_vulkan_logical_device(MyRenderContext *context)
     VkDeviceQueueCreateInfo queueInfo[3] = {0};
     VkDeviceCreateInfo deviceInfo = {0};
     VkPhysicalDeviceFeatures enabledFeatures = {0};
-    float defaultQueuePriority = 1.0f;
+    float defaultQueuePriority[3] = {1.0f, 1.0f, 1.0f};
     uint32_t uniqueQueueFamilyCount = 0;
     const char *enabledExtensions[4] = {0};
     VkPhysicalDevicePresentModeFifoLatestReadyFeaturesEXT presentModeFeatures = {0};
@@ -715,7 +715,7 @@ void  create_vulkan_logical_device(MyRenderContext *context)
         {
             queueInfo[uniqueQueueFamilyCount].sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
             queueInfo[uniqueQueueFamilyCount].queueFamilyIndex = i;
-            queueInfo[uniqueQueueFamilyCount].pQueuePriorities = &defaultQueuePriority;
+            queueInfo[uniqueQueueFamilyCount].pQueuePriorities = defaultQueuePriority;
             queueInfo[uniqueQueueFamilyCount].queueCount = queueFamilyIndex[i];
             uniqueQueueFamilyCount++;
         }
