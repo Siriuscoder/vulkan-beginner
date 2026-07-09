@@ -47,6 +47,7 @@ typedef struct MyDeviceFeatures
     VkPhysicalDeviceFeatures features;
     VkPhysicalDeviceLimits limits;
     VkPhysicalDeviceMemoryProperties memoryProperties;
+    VkPhysicalDeviceType deviceType;
     uint8_t surfaceMaintenance1Support;
     uint8_t getSurfaceCapabilities2Support;
     uint8_t validationLayerSupport;

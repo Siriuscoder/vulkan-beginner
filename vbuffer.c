@@ -7,7 +7,7 @@ VBuffer create_vulkan_buffer(const MyRenderContext *context, VkDeviceSize size, 
     VkResult r;
     VkBufferCreateInfo bufferInfo = {0};
     VkMemoryAllocateInfo allocInfo = {0};
-    VBuffer buffer;
+    VBuffer buffer = {0};
     
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     bufferInfo.size = size;
@@ -22,6 +22,13 @@ VBuffer create_vulkan_buffer(const MyRenderContext *context, VkDeviceSize size, 
     allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     allocInfo.allocationSize = memRequirements.size;
     allocInfo.memoryTypeIndex = get_vulkan_memory_type_index(context, memRequirements.memoryTypeBits, properties);
+
+    if (allocInfo.memoryTypeIndex == UINT32_MAX)
+    {
+        vkDestroyBuffer(context->logicalDevice, buffer.buffer, NULL);
+        buffer.buffer = VK_NULL_HANDLE;
+        return buffer;
+    }
 
     CHECK_VK(vkAllocateMemory(context->logicalDevice, &allocInfo, NULL, &buffer.memory));
     CHECK_VK(vkBindBufferMemory(context->logicalDevice, buffer.buffer, buffer.memory, 0));
@@ -74,9 +81,19 @@ VBuffer create_and_upload_vulkan_buffer(const MyRenderContext *context, const vo
     VkResult r;
     void *data = NULL;
     VBuffer deviceBuffer;
+    VBuffer stagingBuffer;
 
-    VBuffer stagingBuffer = create_vulkan_buffer(context, bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    if (context->supportedFeatures.deviceType != VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
+    {
+        deviceBuffer = stagingBuffer = create_vulkan_buffer(context, bufferSize, usage, 
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    }
+
+    if (!stagingBuffer.buffer)
+    {
+        stagingBuffer = create_vulkan_buffer(context, bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    }
 
     CHECK_VK(vkMapMemory(context->logicalDevice, stagingBuffer.memory, 0, stagingBuffer.size, 0, &data));
     SDL_assert(data);
@@ -84,11 +101,14 @@ VBuffer create_and_upload_vulkan_buffer(const MyRenderContext *context, const vo
     memcpy(data, bufferData, (size_t) bufferSize);
     vkUnmapMemory(context->logicalDevice, stagingBuffer.memory);
 
-    deviceBuffer = create_vulkan_buffer(context, bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | usage, 
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (!deviceBuffer.buffer)
+    {
+        deviceBuffer = create_vulkan_buffer(context, bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | usage, 
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-    copy_vulkan_buffer(context, stagingBuffer, deviceBuffer, bufferSize);
-    destroy_vulkan_buffer(context, stagingBuffer);
+        copy_vulkan_buffer(context, stagingBuffer, deviceBuffer, bufferSize);
+        destroy_vulkan_buffer(context, stagingBuffer);
+    }
 
     return deviceBuffer;
 }

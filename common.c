@@ -655,6 +655,7 @@ void choose_vulkan_physical_device(MyRenderContext *context, uint32_t flags)
         context->queueFamilyCount = queueFamilyCount;
         context->supportedFeatures.features = features.features;
         context->supportedFeatures.limits = props.properties.limits;
+        context->supportedFeatures.deviceType = props.properties.deviceType;
 
         if (flags & SAMPLE_USE_DISCRETE_GPU)
         {
@@ -1179,8 +1180,5 @@ uint32_t get_vulkan_memory_type_index(const MyRenderContext *context, uint32_t t
         }
     }
 
-    fprintf(stderr, "Failed to find suitable GPU\n");
-    exit(1);
-
-    return 0;
+    return UINT32_MAX;
 }
